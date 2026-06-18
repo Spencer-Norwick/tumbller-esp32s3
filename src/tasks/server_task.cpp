@@ -13,6 +13,7 @@ static WiFiServer server(80);
 static void serverTask(void *pvParameters);
 static void sendJson(WiFiClient &client, const char *status, const String &body);
 static bool handleInfoRequest(WiFiClient &client, const String &header);
+static bool handleI2cScanRequest(WiFiClient &client, const String &header);
 static bool handleSensorRequest(WiFiClient &client, const String &header);
 static bool handleMotorRequest(WiFiClient &client, const String &header);
 
@@ -61,6 +62,7 @@ static void serverTask(void *pvParameters) {
           if (currentLine.length() == 0) {
             // End of headers: dispatch by path (info → JSON, sensor → JSON, motor → HTML)
             if (handleInfoRequest(client, header)) break;
+            if (handleI2cScanRequest(client, header)) break;
             if (handleSensorRequest(client, header)) break;
             if (handleMotorRequest(client, header)) break;
 
@@ -100,6 +102,33 @@ static bool handleInfoRequest(WiFiClient &client, const String &header) {
   if (header.indexOf("GET /info") < 0) return false;
   String ipStr = WiFi.localIP().toString();
   String jsonResponse = "{\"hostname\":\"" + String(WIFI_HOSTNAME) + "\",\"ip\":\"" + ipStr + "\"}";
+  sendJson(client, "HTTP/1.1 200 OK", jsonResponse);
+  return true;
+}
+
+static bool handleI2cScanRequest(WiFiClient &client, const String &header) {
+  // /i2c/scan -> list responding 7-bit I2C addresses for board bring-up.
+  if (header.indexOf("GET /i2c/scan") < 0) return false;
+
+  String jsonResponse = "{\"addresses\":[";
+  bool first = true;
+  for (uint8_t address = 1; address < 127; address++) {
+    Wire.beginTransmission(address);
+    uint8_t error = Wire.endTransmission();
+    if (error == 0) {
+      if (!first) {
+        jsonResponse += ",";
+      }
+      jsonResponse += "\"0x";
+      if (address < 16) {
+        jsonResponse += "0";
+      }
+      jsonResponse += String(address, HEX);
+      jsonResponse += "\"";
+      first = false;
+    }
+  }
+  jsonResponse += "]}";
   sendJson(client, "HTTP/1.1 200 OK", jsonResponse);
   return true;
 }
@@ -196,6 +225,13 @@ static bool handleMotorRequest(WiFiClient &client, const String &header) {
   }
 
   if (recognized) {
+#ifdef SAFE_BRINGUP
+    if (msg.cmd != MotorCommand::Stop) {
+      client.println("<h1>SAFE_BRINGUP: movement disabled</h1>");
+      client.println("<p>Rebuild without SAFE_BRINGUP after motor polarity and stop behavior are verified.</p>");
+      return true;
+    }
+#endif
     xQueueSend(g_motorQueue, &msg, 0);
   }
 

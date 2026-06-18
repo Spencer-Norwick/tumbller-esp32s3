@@ -13,6 +13,10 @@
   #define SERIAL_PRINTLN(msg) ((void)0)
 #endif
 
+// SAFE_BRINGUP keeps movement commands disabled while validating a new board.
+// /motor/stop still works. Remove -DSAFE_BRINGUP from platformio.ini after
+// logic rails, I2C devices, motor polarity, and emergency stop are proven.
+
 // Motor driver pins (Arduino pin names map via board variant)
 #define OE   A6
 #define AIN1 7
