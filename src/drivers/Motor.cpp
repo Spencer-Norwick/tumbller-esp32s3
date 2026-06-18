@@ -33,16 +33,16 @@ void Motor::Stop(int speed)
 
 void Motor::Forward(int speed)
 {
-  digitalWrite(AIN1, 0);
-  digitalWrite(BIN1, 0);
+  digitalWrite(AIN1, 1);
+  digitalWrite(BIN1, 1);
   analogWrite(PWMA_LEFT, speed);
   analogWrite(PWMB_RIGHT, speed);
 }
 
 void Motor::Back(int speed)
 {
-  digitalWrite(AIN1, 1);
-  digitalWrite(BIN1, 1);
+  digitalWrite(AIN1, 0);
+  digitalWrite(BIN1, 0);
   analogWrite(PWMA_LEFT, speed);
   analogWrite(PWMB_RIGHT, speed);
 }
