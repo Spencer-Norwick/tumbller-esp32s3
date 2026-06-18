@@ -29,9 +29,9 @@ extern SensirionI2cSht3x sensor;
 extern bool sht3xReady;
 
 // Motor behavior constants
-constexpr int MOTOR_SPEED = 60;
-constexpr unsigned long MOTOR_FORWARD_BACK_TIME = 2000; // ms
-constexpr unsigned long MOTOR_TURN_TIME = 1000; // ms
+constexpr int MOTOR_SPEED = 90;
+constexpr unsigned long MOTOR_FORWARD_BACK_TIME = 200; // ms
+constexpr unsigned long MOTOR_TURN_TIME = 180; // ms
 
 // Initialize shared queue and state
 void task_common_init();
