@@ -64,3 +64,31 @@ void Motor::Right(int speed)
   analogWrite(PWMA_LEFT, speed);  // Left motor speed
   analogWrite(PWMB_RIGHT, speed); // Right motor speed
 }
+
+void Motor::LeftOnlyHigh(int speed)
+{
+  digitalWrite(AIN1, 1);
+  analogWrite(PWMA_LEFT, speed);
+  analogWrite(PWMB_RIGHT, 0);
+}
+
+void Motor::LeftOnlyLow(int speed)
+{
+  digitalWrite(AIN1, 0);
+  analogWrite(PWMA_LEFT, speed);
+  analogWrite(PWMB_RIGHT, 0);
+}
+
+void Motor::RightOnlyHigh(int speed)
+{
+  digitalWrite(BIN1, 1);
+  analogWrite(PWMA_LEFT, 0);
+  analogWrite(PWMB_RIGHT, speed);
+}
+
+void Motor::RightOnlyLow(int speed)
+{
+  digitalWrite(BIN1, 0);
+  analogWrite(PWMA_LEFT, 0);
+  analogWrite(PWMB_RIGHT, speed);
+}

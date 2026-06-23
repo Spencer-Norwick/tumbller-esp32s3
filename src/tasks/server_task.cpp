@@ -172,6 +172,7 @@ static bool handleSensorRequest(WiFiClient &client, const String &header) {
 static bool handleMotorRequest(WiFiClient &client, const String &header) {
   // /motor/* → enqueue a motor command and acknowledge
   if (header.indexOf("GET /motor/") < 0) return false;
+  const bool holdMode = header.indexOf("hold=1") >= 0;
 
   client.println("HTTP/1.1 200 OK");
   client.println("Content-type:text/html");
@@ -187,33 +188,61 @@ static bool handleMotorRequest(WiFiClient &client, const String &header) {
   bool recognized = false;
   // Dispatch motor commands by matching the request path to a direction/stop action.
   // header.indexOf(...) returns the substring position or -1; >= 0 means the route is present.
-  if (header.indexOf("GET /motor/forward") >= 0) { // forward command
+  if (header.indexOf("GET /motor/test/left-high") >= 0) {
+#ifdef USE_SERIAL
+    Serial.println("LEFT_HIGH");
+#endif
+    msg.cmd = MotorCommand::LeftHigh;
+    msg.timeoutMs = holdMode ? MOTOR_HOLD_REFRESH_TIME : MOTOR_DIAGNOSTIC_TIME;
+    recognized = true;
+  } else if (header.indexOf("GET /motor/test/left-low") >= 0) {
+#ifdef USE_SERIAL
+    Serial.println("LEFT_LOW");
+#endif
+    msg.cmd = MotorCommand::LeftLow;
+    msg.timeoutMs = holdMode ? MOTOR_HOLD_REFRESH_TIME : MOTOR_DIAGNOSTIC_TIME;
+    recognized = true;
+  } else if (header.indexOf("GET /motor/test/right-high") >= 0) {
+#ifdef USE_SERIAL
+    Serial.println("RIGHT_HIGH");
+#endif
+    msg.cmd = MotorCommand::RightHigh;
+    msg.timeoutMs = holdMode ? MOTOR_HOLD_REFRESH_TIME : MOTOR_DIAGNOSTIC_TIME;
+    recognized = true;
+  } else if (header.indexOf("GET /motor/test/right-low") >= 0) {
+#ifdef USE_SERIAL
+    Serial.println("RIGHT_LOW");
+#endif
+    msg.cmd = MotorCommand::RightLow;
+    msg.timeoutMs = holdMode ? MOTOR_HOLD_REFRESH_TIME : MOTOR_DIAGNOSTIC_TIME;
+    recognized = true;
+  } else if (header.indexOf("GET /motor/forward") >= 0) { // forward command
 #ifdef USE_SERIAL
     Serial.println(MOTOR_STATE_STRINGS[0]);
 #endif
     msg.cmd = MotorCommand::Forward;
-    msg.timeoutMs = MOTOR_FORWARD_BACK_TIME;
+    msg.timeoutMs = holdMode ? MOTOR_HOLD_REFRESH_TIME : MOTOR_FORWARD_BACK_TIME;
     recognized = true;
   } else if (header.indexOf("GET /motor/back") >= 0) {
 #ifdef USE_SERIAL
     Serial.println(MOTOR_STATE_STRINGS[1]);
 #endif
     msg.cmd = MotorCommand::Back;
-    msg.timeoutMs = MOTOR_FORWARD_BACK_TIME;
+    msg.timeoutMs = holdMode ? MOTOR_HOLD_REFRESH_TIME : MOTOR_FORWARD_BACK_TIME;
     recognized = true;
   } else if (header.indexOf("GET /motor/left") >= 0) {
 #ifdef USE_SERIAL
     Serial.println(MOTOR_STATE_STRINGS[2]);
 #endif
     msg.cmd = MotorCommand::Left;
-    msg.timeoutMs = MOTOR_TURN_TIME;
+    msg.timeoutMs = holdMode ? MOTOR_HOLD_REFRESH_TIME : MOTOR_TURN_TIME;
     recognized = true;
   } else if (header.indexOf("GET /motor/right") >= 0) {
 #ifdef USE_SERIAL
     Serial.println(MOTOR_STATE_STRINGS[3]);
 #endif
     msg.cmd = MotorCommand::Right;
-    msg.timeoutMs = MOTOR_TURN_TIME;
+    msg.timeoutMs = holdMode ? MOTOR_HOLD_REFRESH_TIME : MOTOR_TURN_TIME;
     recognized = true;
   } else if (header.indexOf("GET /motor/stop") >= 0) {
 #ifdef USE_SERIAL

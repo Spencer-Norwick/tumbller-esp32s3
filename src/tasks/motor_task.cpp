@@ -53,6 +53,34 @@ static void motorTask(void *pvParameters) {
           motorTimeout = msg.timeoutMs;
           motorStartTime = millis();
           break;
+        case MotorCommand::LeftHigh:
+          motor.LeftOnlyHigh(MOTOR_SPEED);
+          motorState = "LEFT_HIGH";
+          motorRunning = true;
+          motorTimeout = msg.timeoutMs;
+          motorStartTime = millis();
+          break;
+        case MotorCommand::LeftLow:
+          motor.LeftOnlyLow(MOTOR_SPEED);
+          motorState = "LEFT_LOW";
+          motorRunning = true;
+          motorTimeout = msg.timeoutMs;
+          motorStartTime = millis();
+          break;
+        case MotorCommand::RightHigh:
+          motor.RightOnlyHigh(MOTOR_SPEED);
+          motorState = "RIGHT_HIGH";
+          motorRunning = true;
+          motorTimeout = msg.timeoutMs;
+          motorStartTime = millis();
+          break;
+        case MotorCommand::RightLow:
+          motor.RightOnlyLow(MOTOR_SPEED);
+          motorState = "RIGHT_LOW";
+          motorRunning = true;
+          motorTimeout = msg.timeoutMs;
+          motorStartTime = millis();
+          break;
         case MotorCommand::Stop:
         default:
           motor.Stop(0);

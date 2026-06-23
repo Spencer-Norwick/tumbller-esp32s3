@@ -13,6 +13,10 @@ enum class MotorCommand : uint8_t {
   Back,
   Left,
   Right,
+  LeftHigh,
+  LeftLow,
+  RightHigh,
+  RightLow,
   Stop
 };
 
@@ -32,6 +36,8 @@ extern bool sht3xReady;
 constexpr int MOTOR_SPEED = 90;
 constexpr unsigned long MOTOR_FORWARD_BACK_TIME = 200; // ms
 constexpr unsigned long MOTOR_TURN_TIME = 180; // ms
+constexpr unsigned long MOTOR_DIAGNOSTIC_TIME = 220; // ms
+constexpr unsigned long MOTOR_HOLD_REFRESH_TIME = 900; // ms
 
 // Initialize shared queue and state
 void task_common_init();

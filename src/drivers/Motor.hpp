@@ -20,6 +20,10 @@ class Motor
           void Back(int speed);
           void Left(int speed);
           void Right(int speed);
+          void LeftOnlyHigh(int speed);
+          void LeftOnlyLow(int speed);
+          void RightOnlyHigh(int speed);
+          void RightOnlyLow(int speed);
 
   public:
           static unsigned long encoder_count_right_a;
