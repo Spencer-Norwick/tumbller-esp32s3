@@ -19,6 +19,7 @@ class Mpu6050Imu {
 
   uint8_t address() const { return _address; }
   uint8_t whoAmI() const { return _whoAmI; }
+  bool whoAmICompatible() const { return _whoAmICompatible; }
   const char *lastError() const { return _lastError; }
 
  private:
@@ -29,5 +30,6 @@ class Mpu6050Imu {
 
   uint8_t _address = 0x68;
   uint8_t _whoAmI = 0;
+  bool _whoAmICompatible = false;
   char _lastError[40] = "not initialized";
 };

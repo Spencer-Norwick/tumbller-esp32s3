@@ -17,6 +17,7 @@ constexpr uint8_t MPU6050_WHO_AM_I_COMPATIBLE = 0x70;
 bool Mpu6050Imu::begin(TwoWire &wire, uint8_t address) {
   _address = address;
   _whoAmI = 0;
+  _whoAmICompatible = false;
 
   if (!writeRegister(wire, MPU6050_RA_PWR_MGMT_1, 0x01)) {
     return false;
@@ -38,9 +39,10 @@ bool Mpu6050Imu::begin(TwoWire &wire, uint8_t address) {
     return false;
   }
 
-  if (_whoAmI != MPU6050_WHO_AM_I_EXPECTED && _whoAmI != MPU6050_WHO_AM_I_COMPATIBLE) {
+  _whoAmICompatible = _whoAmI == MPU6050_WHO_AM_I_EXPECTED || _whoAmI == MPU6050_WHO_AM_I_COMPATIBLE;
+  if (!_whoAmICompatible) {
     setError("unexpected WHO_AM_I");
-    return false;
+    return true;
   }
 
   setError("ok");

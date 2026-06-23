@@ -12,6 +12,7 @@ struct BalanceTelemetry {
   bool balanceMotorOutputEnabled = false;
   uint8_t imuAddress = 0;
   uint8_t whoAmI = 0;
+  bool whoAmICompatible = false;
   uint32_t loopCount = 0;
   uint32_t failedReadCount = 0;
   unsigned long updatedAtMs = 0;

@@ -171,6 +171,7 @@ static bool handleImuRawRequest(WiFiClient &client, const String &header) {
   jsonResponse += ",\"lastReadOk\":" + String(jsonBool(telemetry.lastReadOk));
   jsonResponse += ",\"imuAddress\":\"" + hexByte(telemetry.imuAddress) + "\"";
   jsonResponse += ",\"whoAmI\":\"" + hexByte(telemetry.whoAmI) + "\"";
+  jsonResponse += ",\"whoAmICompatible\":" + String(jsonBool(telemetry.whoAmICompatible));
   jsonResponse += ",\"updatedAtMs\":" + String(telemetry.updatedAtMs);
   jsonResponse += ",\"lastError\":\"" + String(telemetry.lastError) + "\"";
   jsonResponse += ",\"raw\":{";
@@ -198,6 +199,7 @@ static bool handleBalanceStatusRequest(WiFiClient &client, const String &header)
   jsonResponse += ",\"balanceMotorOutputEnabled\":" + String(jsonBool(telemetry.balanceMotorOutputEnabled));
   jsonResponse += ",\"imuAddress\":\"" + hexByte(telemetry.imuAddress) + "\"";
   jsonResponse += ",\"whoAmI\":\"" + hexByte(telemetry.whoAmI) + "\"";
+  jsonResponse += ",\"whoAmICompatible\":" + String(jsonBool(telemetry.whoAmICompatible));
   jsonResponse += ",\"updatedAtMs\":" + String(telemetry.updatedAtMs);
   jsonResponse += ",\"loopCount\":" + String(telemetry.loopCount);
   jsonResponse += ",\"failedReadCount\":" + String(telemetry.failedReadCount);

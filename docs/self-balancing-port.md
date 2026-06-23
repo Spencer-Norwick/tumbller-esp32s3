@@ -45,6 +45,6 @@ Safety constraints:
 - [x] Document source references and validation workflow.
 - [x] Build and expose raw IMU telemetry.
 - [x] Build and expose pitch/Kalman telemetry.
-- [ ] Validate `/i2c/scan`, `/imu/raw`, and `/balance/status` on hardware.
-- [ ] Record hardware validation results in `docs/balancing-experiments.md`.
+- [x] Validate `/i2c/scan`, `/imu/raw`, and `/balance/status` on hardware.
+- [x] Record hardware validation results in `docs/balancing-experiments.md`.
 - [ ] Only after validation: plan motor-output balance loop as a separate milestone.

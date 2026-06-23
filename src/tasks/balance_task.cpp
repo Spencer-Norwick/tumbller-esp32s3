@@ -53,6 +53,7 @@ void balanceTask(void *pvParameters) {
   if (i2c_lock(pdMS_TO_TICKS(500))) {
     telemetry.imuReady = g_imu.begin(Wire, IMU_I2C_ADDR);
     telemetry.whoAmI = g_imu.whoAmI();
+    telemetry.whoAmICompatible = g_imu.whoAmICompatible();
     setError(telemetry, g_imu.lastError());
     i2c_unlock();
   } else {
