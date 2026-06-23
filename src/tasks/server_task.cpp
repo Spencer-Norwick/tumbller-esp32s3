@@ -7,13 +7,19 @@
 #include <freertos/task.h>
 
 #include "task_common.hpp"
+#include "balance_task.hpp"
 #include "server_task.hpp"
 
 static WiFiServer server(80);
 static void serverTask(void *pvParameters);
 static void sendJson(WiFiClient &client, const char *status, const String &body);
+static const char *jsonBool(bool value);
+static String hexByte(uint8_t value);
 static bool handleInfoRequest(WiFiClient &client, const String &header);
 static bool handleI2cScanRequest(WiFiClient &client, const String &header);
+static bool handleImuRawRequest(WiFiClient &client, const String &header);
+static bool handleBalanceStatusRequest(WiFiClient &client, const String &header);
+static bool handleBalanceCalibrateRequest(WiFiClient &client, const String &header);
 static bool handleSensorRequest(WiFiClient &client, const String &header);
 static bool handleMotorRequest(WiFiClient &client, const String &header);
 
@@ -63,6 +69,9 @@ static void serverTask(void *pvParameters) {
             // End of headers: dispatch by path (info → JSON, sensor → JSON, motor → HTML)
             if (handleInfoRequest(client, header)) break;
             if (handleI2cScanRequest(client, header)) break;
+            if (handleImuRawRequest(client, header)) break;
+            if (handleBalanceCalibrateRequest(client, header)) break;
+            if (handleBalanceStatusRequest(client, header)) break;
             if (handleSensorRequest(client, header)) break;
             if (handleMotorRequest(client, header)) break;
 
@@ -97,6 +106,19 @@ static void sendJson(WiFiClient &client, const char *status, const String &body)
   client.println(body);
 }
 
+static const char *jsonBool(bool value) {
+  return value ? "true" : "false";
+}
+
+static String hexByte(uint8_t value) {
+  String result = "0x";
+  if (value < 16) {
+    result += "0";
+  }
+  result += String(value, HEX);
+  return result;
+}
+
 static bool handleInfoRequest(WiFiClient &client, const String &header) {
   // /info → report hostname and current IP as JSON
   if (header.indexOf("GET /info") < 0) return false;
@@ -109,6 +131,11 @@ static bool handleInfoRequest(WiFiClient &client, const String &header) {
 static bool handleI2cScanRequest(WiFiClient &client, const String &header) {
   // /i2c/scan -> list responding 7-bit I2C addresses for board bring-up.
   if (header.indexOf("GET /i2c/scan") < 0) return false;
+
+  if (!i2c_lock(pdMS_TO_TICKS(250))) {
+    sendJson(client, "HTTP/1.1 503 Service Unavailable", "{\"error\":\"I2C bus busy\"}");
+    return true;
+  }
 
   String jsonResponse = "{\"addresses\":[";
   bool first = true;
@@ -128,8 +155,73 @@ static bool handleI2cScanRequest(WiFiClient &client, const String &header) {
       first = false;
     }
   }
+  i2c_unlock();
   jsonResponse += "]}";
   sendJson(client, "HTTP/1.1 200 OK", jsonResponse);
+  return true;
+}
+
+static bool handleImuRawRequest(WiFiClient &client, const String &header) {
+  if (header.indexOf("GET /imu/raw") < 0) return false;
+
+  BalanceTelemetry telemetry;
+  balance_get_raw(telemetry);
+  String jsonResponse = "{";
+  jsonResponse += "\"imuReady\":" + String(jsonBool(telemetry.imuReady));
+  jsonResponse += ",\"lastReadOk\":" + String(jsonBool(telemetry.lastReadOk));
+  jsonResponse += ",\"imuAddress\":\"" + hexByte(telemetry.imuAddress) + "\"";
+  jsonResponse += ",\"whoAmI\":\"" + hexByte(telemetry.whoAmI) + "\"";
+  jsonResponse += ",\"updatedAtMs\":" + String(telemetry.updatedAtMs);
+  jsonResponse += ",\"lastError\":\"" + String(telemetry.lastError) + "\"";
+  jsonResponse += ",\"raw\":{";
+  jsonResponse += "\"ax\":" + String(telemetry.raw.ax);
+  jsonResponse += ",\"ay\":" + String(telemetry.raw.ay);
+  jsonResponse += ",\"az\":" + String(telemetry.raw.az);
+  jsonResponse += ",\"gx\":" + String(telemetry.raw.gx);
+  jsonResponse += ",\"gy\":" + String(telemetry.raw.gy);
+  jsonResponse += ",\"gz\":" + String(telemetry.raw.gz);
+  jsonResponse += "}}";
+  sendJson(client, "HTTP/1.1 200 OK", jsonResponse);
+  return true;
+}
+
+static bool handleBalanceStatusRequest(WiFiClient &client, const String &header) {
+  if (header.indexOf("GET /balance/status") < 0) return false;
+
+  BalanceTelemetry telemetry;
+  balance_get_status(telemetry);
+  String jsonResponse = "{";
+  jsonResponse += "\"imuReady\":" + String(jsonBool(telemetry.imuReady));
+  jsonResponse += ",\"lastReadOk\":" + String(jsonBool(telemetry.lastReadOk));
+  jsonResponse += ",\"calibrated\":" + String(jsonBool(telemetry.calibrated));
+  jsonResponse += ",\"calibrationInProgress\":" + String(jsonBool(telemetry.calibrationInProgress));
+  jsonResponse += ",\"balanceMotorOutputEnabled\":" + String(jsonBool(telemetry.balanceMotorOutputEnabled));
+  jsonResponse += ",\"imuAddress\":\"" + hexByte(telemetry.imuAddress) + "\"";
+  jsonResponse += ",\"whoAmI\":\"" + hexByte(telemetry.whoAmI) + "\"";
+  jsonResponse += ",\"updatedAtMs\":" + String(telemetry.updatedAtMs);
+  jsonResponse += ",\"loopCount\":" + String(telemetry.loopCount);
+  jsonResponse += ",\"failedReadCount\":" + String(telemetry.failedReadCount);
+  jsonResponse += ",\"loopDtMs\":" + String(telemetry.loopDtMs, 3);
+  jsonResponse += ",\"accelPitchDeg\":" + String(telemetry.accelPitchDeg, 3);
+  jsonResponse += ",\"pitchDeg\":" + String(telemetry.pitchDeg, 3);
+  jsonResponse += ",\"gyroRateDps\":" + String(telemetry.gyroRateDps, 3);
+  jsonResponse += ",\"gyroBiasRaw\":" + String(telemetry.gyroBiasRaw, 3);
+  jsonResponse += ",\"lastError\":\"" + String(telemetry.lastError) + "\"";
+  jsonResponse += "}";
+  sendJson(client, "HTTP/1.1 200 OK", jsonResponse);
+  return true;
+}
+
+static bool handleBalanceCalibrateRequest(WiFiClient &client, const String &header) {
+  if (header.indexOf("GET /balance/calibrate") < 0) return false;
+
+  const bool queued = balance_request_calibration();
+  String jsonResponse = "{";
+  jsonResponse += "\"calibrationQueued\":" + String(jsonBool(queued));
+  jsonResponse += ",\"requiresStationaryRobot\":true";
+  jsonResponse += ",\"message\":\"Keep the robot still while calibrationInProgress is true.\"";
+  jsonResponse += "}";
+  sendJson(client, queued ? "HTTP/1.1 202 Accepted" : "HTTP/1.1 503 Service Unavailable", jsonResponse);
   return true;
 }
 
@@ -143,7 +235,12 @@ static bool handleSensorRequest(WiFiClient &client, const String &header) {
 
   float aTemperature = 0.0;
   float aHumidity = 0.0;
+  if (!i2c_lock(pdMS_TO_TICKS(250))) {
+    sendJson(client, "HTTP/1.1 503 Service Unavailable", "{\"error\":\"I2C bus busy\"}");
+    return true;
+  }
   int16_t error = sensor.measureSingleShot(REPEATABILITY_MEDIUM, false, aTemperature, aHumidity);
+  i2c_unlock();
   if (error != NO_ERROR) {
 #ifdef USE_SERIAL
     char errorMessage[64];

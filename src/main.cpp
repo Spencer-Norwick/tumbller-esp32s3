@@ -8,6 +8,7 @@
 
 #include "tasks/task_common.hpp"
 #include "tasks/motor_task.hpp"
+#include "tasks/balance_task.hpp"
 #include "tasks/server_task.hpp"
 
 #include "drivers/wifi_setup.h"
@@ -91,6 +92,7 @@ void setup() {
   // Shared queue and tasks
   task_common_init();
   motor_task_start();
+  balance_task_start();
   server_task_start();
 
 }

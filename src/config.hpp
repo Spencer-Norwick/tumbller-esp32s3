@@ -29,5 +29,10 @@
 #define ENCODER_LEFT_A_PIN 2
 #define ENCODER_RIGHT_A_PIN 4
 
+// IMU / balance sensor validation
+#define IMU_I2C_ADDR 0x68
+#define BALANCE_SENSOR_LOOP_MS 5
+#define BALANCE_GYRO_CALIBRATION_SAMPLES 500
+
 // WiFi / mDNS hostname
 #define WIFI_HOSTNAME "finland-tumbller-01"

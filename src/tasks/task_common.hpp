@@ -6,6 +6,7 @@
 #include <SensirionI2cSht3x.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
+#include <freertos/semphr.h>
 
 // Motor command types shared between tasks
 enum class MotorCommand : uint8_t {
@@ -27,6 +28,7 @@ struct MotorCommandMsg {
 
 // Shared resources
 extern QueueHandle_t g_motorQueue;
+extern SemaphoreHandle_t g_i2cMutex;
 extern String motorState;
 extern const char *const MOTOR_STATE_STRINGS[5];
 extern SensirionI2cSht3x sensor;
@@ -41,3 +43,5 @@ constexpr unsigned long MOTOR_HOLD_REFRESH_TIME = 900; // ms
 
 // Initialize shared queue and state
 void task_common_init();
+bool i2c_lock(TickType_t timeoutTicks);
+void i2c_unlock();

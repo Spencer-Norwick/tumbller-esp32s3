@@ -43,8 +43,8 @@ Safety constraints:
 - [x] Preserve motor diagnostic bring-up work on a dedicated branch.
 - [x] Import AVR-vs-ESP32 control-loop comparison notes.
 - [x] Document source references and validation workflow.
-- [ ] Build and expose raw IMU telemetry.
-- [ ] Build and expose pitch/Kalman telemetry.
+- [x] Build and expose raw IMU telemetry.
+- [x] Build and expose pitch/Kalman telemetry.
 - [ ] Validate `/i2c/scan`, `/imu/raw`, and `/balance/status` on hardware.
 - [ ] Record hardware validation results in `docs/balancing-experiments.md`.
 - [ ] Only after validation: plan motor-output balance loop as a separate milestone.
