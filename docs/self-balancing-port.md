@@ -53,8 +53,16 @@ The `*SmoothedDeg` fields are low-pass filtered copies for hand validation. The 
 Current hand-test interpretation:
 
 - `accelTiltXDeg` is the leading forward/back pitch candidate.
+- `gyroYRateDps` is the forward/back pitch-rate candidate; it moves during forward/back rocking and changes polarity when tilt direction reverses.
 - `accelAngleAyAzDeg` behaves like side-to-side roll on this mounting.
 - `accelAngleAxAyDeg` wraps near upright and should remain a diagnostic signal, not a control input.
+
+Selected validation path:
+
+- `/balance/status` reports `accelPitchDeg` from `accelTiltXDeg`.
+- `/balance/status` reports `gyroRateDps` from bias-corrected `gyroYRateDps`.
+- The Kalman pitch estimate uses `accelTiltXDeg + gyroYRateDps` for validation only.
+- `balanceMotorOutputEnabled` remains `false`; the selected pitch path is not yet allowed to drive motors.
 
 ## Milestone Checklist
 

@@ -227,3 +227,31 @@ Result: `atan2(AY, AZ)` moved smoothly and symmetrically across the resting axis
 Takeaway: `atan2(AY, AZ)` is the roll-axis candidate on this mounting. This reinforces that the original Elegoo `atan2(ay, az)` pitch convention does not map directly to forward/back pitch on the ESP32S3 Tumbller hardware.
 
 Next action: Identify the gyro axis that best matches X-tilt forward/back pitch motion, then switch the validation Kalman path from the Elegoo AY/AZ + gyro-X convention to the mounted X-tilt + matching-gyro convention.
+
+## 2026-06-24: Forward/Back Gyro Axis Match
+
+Goal: Identify which gyro axis matches the X-tilt forward/back pitch candidate.
+
+Setup: Balance Lab dashboard with separate gyro-rate trace for gyro X, Y, and Z. Robot was manually tilted forward and backward.
+
+Change: Cleared the trace, then compared gyro X/Y/Z movement while rocking forward/back.
+
+Result: Gyro Y was the only gyro trace that clearly moved during forward/back tilt. Its polarity changed when the tilt direction reversed. Gyro X and gyro Z did not show comparable movement for this test.
+
+Takeaway: The mounted forward/back pitch path should use X tilt for angle and gyro Y for rate. This differs from the original Elegoo AVR convention, which used `atan2(ay, az)` and gyro X.
+
+Next action: Switch the validation Kalman input to `accelTiltXDeg + gyroYRateDps`, calibrating stationary gyro bias from raw gyro Y, while keeping balance motor output disabled.
+
+## 2026-06-24: Validation Kalman Axis Switch
+
+Goal: Apply the mounted pitch-axis finding to the validation-only Kalman path.
+
+Setup: Firmware update after hand tests identified X tilt as the forward/back angle candidate and gyro Y as the matching rate candidate.
+
+Change: Changed `accelPitchDeg` to use `accelTiltXDeg`, changed `gyroRateDps` to use bias-corrected raw gyro Y, changed stationary gyro calibration to average raw gyro Y, and added source labels to `/balance/status`.
+
+Result: Code and documentation updated locally. Build/upload validation is still pending because PlatformIO could not access its normal home-directory cache in the current restricted shell environment.
+
+Takeaway: The selected validation path now matches the observed ESP32S3 Tumbller IMU mounting, but it must still be built, uploaded, calibrated, and hand-validated before any motor-control milestone.
+
+Next action: Run `platformio run`, upload to the Nano ESP32, call `/balance/calibrate` while the robot is still, and validate that `pitchDeg` now follows forward/back rocking with `balanceMotorOutputEnabled=false`.

@@ -22,7 +22,7 @@ void publishTelemetry(const BalanceTelemetry &telemetry);
 void copyTelemetry(BalanceTelemetry &out);
 void setError(BalanceTelemetry &telemetry, const char *message);
 bool readImuLocked(ImuRawSample &sample, const char *&error);
-bool runGyroCalibration(float &gyroBiasRaw, BalanceTelemetry &telemetry);
+bool runPitchGyroCalibration(float &gyroBiasRaw, BalanceTelemetry &telemetry);
 float smoothAngleDeg(float previousDeg, float nextDeg, float alpha);
 void computeAxisCandidates(const ImuRawSample &sample, BalanceTelemetry &telemetry);
 void emitSerialTelemetry(const BalanceTelemetry &telemetry);
@@ -72,7 +72,7 @@ void balanceTask(void *pvParameters) {
       telemetry.calibrationInProgress = true;
       publishTelemetry(telemetry);
       float gyroBiasRaw = telemetry.gyroBiasRaw;
-      telemetry.calibrated = runGyroCalibration(gyroBiasRaw, telemetry);
+      telemetry.calibrated = runPitchGyroCalibration(gyroBiasRaw, telemetry);
       telemetry.gyroBiasRaw = gyroBiasRaw;
       telemetry.calibrationInProgress = false;
       g_pitchFilter.reset(telemetry.accelPitchDeg);
@@ -97,10 +97,11 @@ void balanceTask(void *pvParameters) {
     if (readOk) {
       telemetry.raw = sample;
       computeAxisCandidates(sample, telemetry);
-      const float gyroRateDps = (sample.gx - telemetry.gyroBiasRaw) / 131.0f;
+      const float gyroXRateDps = static_cast<float>(sample.gx) / 131.0f;
+      const float gyroRateDps = (sample.gy - telemetry.gyroBiasRaw) / 131.0f;
       telemetry.gyroRateDps = gyroRateDps;
-      telemetry.gyroXRateDps = gyroRateDps;
-      telemetry.gyroYRateDps = static_cast<float>(sample.gy) / 131.0f;
+      telemetry.gyroXRateDps = gyroXRateDps;
+      telemetry.gyroYRateDps = gyroRateDps;
       telemetry.gyroZRateDps = static_cast<float>(sample.gz) / 131.0f;
       g_pitchFilter.update(telemetry.accelPitchDeg, gyroRateDps, dtSeconds);
       telemetry.pitchDeg = g_pitchFilter.angleDeg();
@@ -144,8 +145,8 @@ bool readImuLocked(ImuRawSample &sample, const char *&error) {
   return ok;
 }
 
-bool runGyroCalibration(float &gyroBiasRaw, BalanceTelemetry &telemetry) {
-  int64_t gyroXSum = 0;
+bool runPitchGyroCalibration(float &gyroBiasRaw, BalanceTelemetry &telemetry) {
+  int64_t pitchGyroSum = 0;
   int samplesRead = 0;
 
   for (int i = 0; i < BALANCE_GYRO_CALIBRATION_SAMPLES; i++) {
@@ -155,7 +156,7 @@ bool runGyroCalibration(float &gyroBiasRaw, BalanceTelemetry &telemetry) {
       setError(telemetry, readError);
       return false;
     }
-    gyroXSum += sample.gx;
+    pitchGyroSum += sample.gy;
     telemetry.raw = sample;
     computeAxisCandidates(sample, telemetry);
     samplesRead++;
@@ -167,7 +168,7 @@ bool runGyroCalibration(float &gyroBiasRaw, BalanceTelemetry &telemetry) {
     return false;
   }
 
-  gyroBiasRaw = static_cast<float>(gyroXSum) / static_cast<float>(samplesRead);
+  gyroBiasRaw = static_cast<float>(pitchGyroSum) / static_cast<float>(samplesRead);
   setError(telemetry, "calibrated");
   return true;
 }
@@ -196,7 +197,7 @@ void computeAxisCandidates(const ImuRawSample &sample, BalanceTelemetry &telemet
     telemetry.accelTiltXSmoothedDeg =
         smoothAngleDeg(telemetry.accelTiltXSmoothedDeg, telemetry.accelTiltXDeg, AXIS_CANDIDATE_FILTER_ALPHA);
   }
-  telemetry.accelPitchDeg = telemetry.accelAngleAyAzDeg;
+  telemetry.accelPitchDeg = telemetry.accelTiltXDeg;
 }
 
 float smoothAngleDeg(float previousDeg, float nextDeg, float alpha) {
