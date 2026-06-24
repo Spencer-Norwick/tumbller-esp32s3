@@ -81,6 +81,13 @@ static void motorTask(void *pvParameters) {
           motorTimeout = msg.timeoutMs;
           motorStartTime = millis();
           break;
+        case MotorCommand::BalanceDrive:
+          motor.DriveSigned(msg.leftPwm, msg.rightPwm);
+          motorState = "BALANCE_DRIVE";
+          motorRunning = true;
+          motorTimeout = msg.timeoutMs;
+          motorStartTime = millis();
+          break;
         case MotorCommand::Stop:
         default:
           motor.Stop(0);

@@ -92,3 +92,14 @@ void Motor::RightOnlyLow(int speed)
   analogWrite(PWMA_LEFT, 0);
   analogWrite(PWMB_RIGHT, speed);
 }
+
+void Motor::DriveSigned(int leftPwm, int rightPwm)
+{
+  const int left = constrain(leftPwm, -255, 255);
+  const int right = constrain(rightPwm, -255, 255);
+
+  digitalWrite(AIN1, left >= 0 ? 1 : 0);
+  digitalWrite(BIN1, right >= 0 ? 1 : 0);
+  analogWrite(PWMA_LEFT, abs(left));
+  analogWrite(PWMB_RIGHT, abs(right));
+}

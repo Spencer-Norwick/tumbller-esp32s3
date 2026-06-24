@@ -18,12 +18,15 @@ enum class MotorCommand : uint8_t {
   LeftLow,
   RightHigh,
   RightLow,
+  BalanceDrive,
   Stop
 };
 
 struct MotorCommandMsg {
   MotorCommand cmd;
   unsigned long timeoutMs; // how long to run before auto-stop; 0 means no timer
+  int leftPwm = 0;
+  int rightPwm = 0;
 };
 
 // Shared resources

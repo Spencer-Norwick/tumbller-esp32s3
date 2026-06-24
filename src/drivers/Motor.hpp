@@ -24,6 +24,7 @@ class Motor
           void LeftOnlyLow(int speed);
           void RightOnlyHigh(int speed);
           void RightOnlyLow(int speed);
+          void DriveSigned(int leftPwm, int rightPwm);
 
   public:
           static unsigned long encoder_count_right_a;

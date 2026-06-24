@@ -72,11 +72,14 @@ The first controller milestone computes a proposed balance output without applyi
 - Safer preview defaults are `Kp=5.0`, `Ki=0.0`, `Kd=0.15`, with output limited to `+/-120 pwm`.
 - `/balance/config` exposes RAM-only runtime tuning for `kp`, `ki`, `kd`, `setpoint`, `limit`, and `maxAngle`.
 - Runtime tuning is intentionally volatile; a board reset returns to compile-time defaults.
-- The preview controller computes `P`, `I`, `D`, raw output, clamped output, and proposed left/right PWM.
+- The controller computes `P`, `I`, `D`, raw output, clamped output, and proposed left/right PWM.
 - With `Ki=0.0`, the integral accumulator is held at zero to avoid hidden windup before integral tuning is deliberately enabled.
 - Safety gates require a healthy sensor read, completed gyro calibration, and pitch within `+/-22 deg`.
 - If a gate fails, the clamped output is forced to zero and `/balance/status` reports `balanceSafetyReason`.
-- `BALANCE_MOTOR_OUTPUT_ENABLED` remains `0`; balance code still does not call motor drive methods.
+- Balance motor output is available only through explicit runtime arming. The board starts disarmed after reset.
+- `/balance/arm` requires calibration, healthy sensor reads, pitch inside the configured safe window, and `outputLimit <= 45 pwm`.
+- `/balance/disarm` clears the runtime arm state and queues a motor stop.
+- `/balance/config` includes `motorSign` so first-motion polarity can be flipped without rebuilding.
 - Manual `/motor/*` diagnostics remain separate from balance telemetry.
 
 ## Milestone Checklist
@@ -89,4 +92,5 @@ The first controller milestone computes a proposed balance output without applyi
 - [x] Validate `/i2c/scan`, `/imu/raw`, and `/balance/status` on hardware.
 - [x] Record hardware validation results in `docs/balancing-experiments.md`.
 - [x] Add preview-only balance PID/output telemetry with motor writes disabled.
-- [ ] Only after validation: plan motor-output balance loop as a separate milestone.
+- [x] Add explicit runtime arm/disarm path for first-motion testing.
+- [ ] Validate first controlled balance motor motion on hardware.

@@ -21,6 +21,8 @@ static bool handleInfoRequest(WiFiClient &client, const String &header);
 static bool handleI2cScanRequest(WiFiClient &client, const String &header);
 static bool handleImuRawRequest(WiFiClient &client, const String &header);
 static bool handleBalanceConfigRequest(WiFiClient &client, const String &header);
+static bool handleBalanceArmRequest(WiFiClient &client, const String &header);
+static bool handleBalanceDisarmRequest(WiFiClient &client, const String &header);
 static bool handleBalanceStatusRequest(WiFiClient &client, const String &header);
 static bool handleBalanceCalibrateRequest(WiFiClient &client, const String &header);
 static bool handleSensorRequest(WiFiClient &client, const String &header);
@@ -82,6 +84,8 @@ static void serverTask(void *pvParameters) {
             if (handleI2cScanRequest(client, header)) break;
             if (handleImuRawRequest(client, header)) break;
             if (handleBalanceConfigRequest(client, header)) break;
+            if (handleBalanceArmRequest(client, header)) break;
+            if (handleBalanceDisarmRequest(client, header)) break;
             if (handleBalanceCalibrateRequest(client, header)) break;
             if (handleBalanceStatusRequest(client, header)) break;
             if (handleSensorRequest(client, header)) break;
@@ -212,7 +216,10 @@ static bool handleBalanceStatusRequest(WiFiClient &client, const String &header)
   jsonResponse += ",\"calibrationInProgress\":" + String(jsonBool(telemetry.calibrationInProgress));
   jsonResponse += ",\"balanceControllerEnabled\":" + String(jsonBool(telemetry.balanceControllerEnabled));
   jsonResponse += ",\"balanceControlSafetyOk\":" + String(jsonBool(telemetry.balanceControlSafetyOk));
+  jsonResponse += ",\"balanceMotorOutputAvailable\":" + String(jsonBool(telemetry.balanceMotorOutputAvailable));
+  jsonResponse += ",\"balanceMotorOutputArmed\":" + String(jsonBool(telemetry.balanceMotorOutputArmed));
   jsonResponse += ",\"balanceMotorOutputEnabled\":" + String(jsonBool(telemetry.balanceMotorOutputEnabled));
+  jsonResponse += ",\"balanceDriveCommandSent\":" + String(jsonBool(telemetry.balanceDriveCommandSent));
   jsonResponse += ",\"imuAddress\":\"" + hexByte(telemetry.imuAddress) + "\"";
   jsonResponse += ",\"whoAmI\":\"" + hexByte(telemetry.whoAmI) + "\"";
   jsonResponse += ",\"whoAmICompatible\":" + String(jsonBool(telemetry.whoAmICompatible));
@@ -244,6 +251,7 @@ static bool handleBalanceStatusRequest(WiFiClient &client, const String &header)
   jsonResponse += ",\"balanceKd\":" + String(telemetry.balanceKd, 3);
   jsonResponse += ",\"balanceOutputLimit\":" + String(telemetry.balanceOutputLimit, 3);
   jsonResponse += ",\"balanceMaxAbsAngleDeg\":" + String(telemetry.balanceMaxAbsAngleDeg, 3);
+  jsonResponse += ",\"balanceMotorSign\":" + String(telemetry.balanceMotorSign, 1);
   jsonResponse += ",\"balanceAngleErrorDeg\":" + String(telemetry.balanceAngleErrorDeg, 3);
   jsonResponse += ",\"balanceIntegralError\":" + String(telemetry.balanceIntegralError, 3);
   jsonResponse += ",\"balancePTerm\":" + String(telemetry.balancePTerm, 3);
@@ -292,6 +300,10 @@ static bool handleBalanceConfigRequest(WiFiClient &client, const String &header)
     config.maxAbsAngleDeg = clampConfigValue(value, 1.0f, 45.0f);
     updated = true;
   }
+  if (queryFloatParam(header, "motorSign", value)) {
+    config.motorSign = value < 0.0f ? -1.0f : 1.0f;
+    updated = true;
+  }
 
   if (updated) {
     balance_set_config(config);
@@ -300,15 +312,40 @@ static bool handleBalanceConfigRequest(WiFiClient &client, const String &header)
   String jsonResponse = "{";
   jsonResponse += "\"updated\":" + String(jsonBool(updated));
   jsonResponse += ",\"volatile\":true";
-  jsonResponse += ",\"motorOutputEnabled\":false";
+  jsonResponse += ",\"motorOutputAvailable\":" + String(jsonBool(BALANCE_MOTOR_OUTPUT_AVAILABLE != 0));
+  jsonResponse += ",\"armMaxOutputLimit\":" + String(BALANCE_ARM_MAX_OUTPUT_LIMIT, 3);
   jsonResponse += ",\"setpointDeg\":" + String(config.setpointDeg, 3);
   jsonResponse += ",\"kp\":" + String(config.kp, 3);
   jsonResponse += ",\"ki\":" + String(config.ki, 3);
   jsonResponse += ",\"kd\":" + String(config.kd, 3);
   jsonResponse += ",\"outputLimit\":" + String(config.outputLimit, 3);
   jsonResponse += ",\"maxAbsAngleDeg\":" + String(config.maxAbsAngleDeg, 3);
+  jsonResponse += ",\"motorSign\":" + String(config.motorSign, 1);
   jsonResponse += "}";
   sendJson(client, "HTTP/1.1 200 OK", jsonResponse);
+  return true;
+}
+
+static bool handleBalanceArmRequest(WiFiClient &client, const String &header) {
+  if (header.indexOf("GET /balance/arm") < 0) return false;
+
+  char reason[64] = "";
+  const bool armed = balance_request_motor_arm(reason, sizeof(reason));
+  String jsonResponse = "{";
+  jsonResponse += "\"armed\":" + String(jsonBool(armed));
+  jsonResponse += ",\"motorOutputAvailable\":" + String(jsonBool(BALANCE_MOTOR_OUTPUT_AVAILABLE != 0));
+  jsonResponse += ",\"armMaxOutputLimit\":" + String(BALANCE_ARM_MAX_OUTPUT_LIMIT, 3);
+  jsonResponse += ",\"reason\":\"" + String(reason) + "\"";
+  jsonResponse += "}";
+  sendJson(client, armed ? "HTTP/1.1 202 Accepted" : "HTTP/1.1 409 Conflict", jsonResponse);
+  return true;
+}
+
+static bool handleBalanceDisarmRequest(WiFiClient &client, const String &header) {
+  if (header.indexOf("GET /balance/disarm") < 0) return false;
+
+  balance_request_motor_disarm();
+  sendJson(client, "HTTP/1.1 200 OK", "{\"armed\":false,\"reason\":\"disarmed\"}");
   return true;
 }
 

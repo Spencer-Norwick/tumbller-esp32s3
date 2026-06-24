@@ -311,3 +311,17 @@ Result: Build and upload succeeded. `/balance/config` default readback returned 
 Takeaway: The next tuning loop should happen through the dashboard, not repeated firmware edits. Settings reset on board restart, which keeps experimental gain changes nonpersistent.
 
 Next action: Use the dashboard runtime controls for small near-upright hand tilts and choose preview gains that keep proposed output within range without saturation.
+
+## 2026-06-24: First-Motion Arm Path
+
+Goal: Allow a controlled first balance-motor movement without letting the controller drive motors automatically after reset.
+
+Setup: Robot connected over USB and WiFi after runtime preview tuning. Dashboard running at `http://127.0.0.1:8787`.
+
+Change: Added signed balance-drive motor commands owned by the motor task, runtime `/balance/arm` and `/balance/disarm` endpoints, a RAM-only `motorSign` config field, and dashboard Arm/Disarm controls. Space and Escape in the dashboard disarm balance and send `/motor/stop`.
+
+Result: Build and upload succeeded. Default state after reset was disarmed. A conservative first-motion config was applied with `Kp=5.0`, `Ki=0.0`, `Kd=0.15`, output limit `30 pwm`, max angle `12 deg`, and `motorSign=+1`. With the robot not calibrated and not near upright, `/balance/arm` returned `409 Conflict` with reason `not calibrated`; `/balance/disarm` returned cleanly.
+
+Takeaway: The first-motion path now has an explicit software arm gate, dashboard kill controls, and expected refusal behavior when prerequisites are not met.
+
+Next action: Put the robot wheels-down near upright, recalibrate gyro while stationary, verify `balanceControlSafetyOk=true`, then arm briefly with one hand ready to catch and use Space/Escape to disarm.

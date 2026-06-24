@@ -21,24 +21,33 @@ BalanceControlConfig g_balanceConfig = {
     BALANCE_PID_KD,
     BALANCE_PID_OUTPUT_LIMIT,
     BALANCE_CONTROL_MAX_ABS_ANGLE_DEG,
+    BALANCE_MOTOR_SIGN,
 };
 portMUX_TYPE g_telemetryMux = portMUX_INITIALIZER_UNLOCKED;
 portMUX_TYPE g_configMux = portMUX_INITIALIZER_UNLOCKED;
+portMUX_TYPE g_armMux = portMUX_INITIALIZER_UNLOCKED;
 volatile bool g_calibrationRequested = false;
+bool g_balanceMotorArmed = false;
 
 void balanceTask(void *pvParameters);
 void publishTelemetry(const BalanceTelemetry &telemetry);
 void copyTelemetry(BalanceTelemetry &out);
 void copyConfig(BalanceControlConfig &out);
+bool copyArmState();
+void setArmState(bool armed);
 void setError(BalanceTelemetry &telemetry, const char *message);
 void setBalanceSafetyReason(BalanceTelemetry &telemetry, const char *message);
+void copyReason(char *reason, size_t reasonSize, const char *message);
 bool readImuLocked(ImuRawSample &sample, const char *&error);
 bool runPitchGyroCalibration(float &gyroBiasRaw, BalanceTelemetry &telemetry);
 float smoothAngleDeg(float previousDeg, float nextDeg, float alpha);
 void computeAxisCandidates(const ImuRawSample &sample, BalanceTelemetry &telemetry);
 void computeBalanceControl(BalanceTelemetry &telemetry, float dtSeconds);
+void applyBalanceMotorOutput(BalanceTelemetry &telemetry);
 void applyConfigToTelemetry(BalanceTelemetry &telemetry, const BalanceControlConfig &config);
 float clampFloat(float value, float minValue, float maxValue);
+int clampPwm(float value);
+void queueMotorStop();
 void emitSerialTelemetry(const BalanceTelemetry &telemetry);
 }  // namespace
 
@@ -67,6 +76,44 @@ void balance_set_config(const BalanceControlConfig &config) {
   taskENTER_CRITICAL(&g_configMux);
   g_balanceConfig = config;
   taskEXIT_CRITICAL(&g_configMux);
+}
+
+bool balance_request_motor_arm(char *reason, size_t reasonSize) {
+#if BALANCE_MOTOR_OUTPUT_AVAILABLE == 0
+  copyReason(reason, reasonSize, "motor output unavailable");
+  return false;
+#else
+  BalanceTelemetry telemetry;
+  BalanceControlConfig config;
+  copyTelemetry(telemetry);
+  copyConfig(config);
+
+  if (!telemetry.lastReadOk) {
+    copyReason(reason, reasonSize, "sensor read failed");
+    return false;
+  }
+  if (!telemetry.calibrated) {
+    copyReason(reason, reasonSize, "not calibrated");
+    return false;
+  }
+  if (fabsf(telemetry.pitchDeg) > config.maxAbsAngleDeg) {
+    copyReason(reason, reasonSize, "angle outside safe window");
+    return false;
+  }
+  if (config.outputLimit > BALANCE_ARM_MAX_OUTPUT_LIMIT) {
+    copyReason(reason, reasonSize, "output limit too high for arm");
+    return false;
+  }
+
+  setArmState(true);
+  copyReason(reason, reasonSize, "armed");
+  return true;
+#endif
+}
+
+void balance_request_motor_disarm() {
+  setArmState(false);
+  queueMotorStop();
 }
 
 namespace {
@@ -104,6 +151,8 @@ void balanceTask(void *pvParameters) {
       telemetry.calibrationInProgress = false;
       g_pitchFilter.reset(telemetry.accelPitchDeg);
       telemetry.balanceIntegralError = 0.0f;
+      setArmState(false);
+      queueMotorStop();
       publishTelemetry(telemetry);
     }
 
@@ -141,6 +190,7 @@ void balanceTask(void *pvParameters) {
       setError(telemetry, telemetry.imuReady ? readError : "imu not ready");
     }
 
+    applyBalanceMotorOutput(telemetry);
     publishTelemetry(telemetry);
     emitSerialTelemetry(telemetry);
     vTaskDelay(pdMS_TO_TICKS(BALANCE_SENSOR_LOOP_MS));
@@ -165,6 +215,19 @@ void copyConfig(BalanceControlConfig &out) {
   taskEXIT_CRITICAL(&g_configMux);
 }
 
+bool copyArmState() {
+  taskENTER_CRITICAL(&g_armMux);
+  const bool armed = g_balanceMotorArmed;
+  taskEXIT_CRITICAL(&g_armMux);
+  return armed;
+}
+
+void setArmState(bool armed) {
+  taskENTER_CRITICAL(&g_armMux);
+  g_balanceMotorArmed = armed;
+  taskEXIT_CRITICAL(&g_armMux);
+}
+
 void setError(BalanceTelemetry &telemetry, const char *message) {
   std::strncpy(telemetry.lastError, message, sizeof(telemetry.lastError) - 1);
   telemetry.lastError[sizeof(telemetry.lastError) - 1] = '\0';
@@ -173,6 +236,14 @@ void setError(BalanceTelemetry &telemetry, const char *message) {
 void setBalanceSafetyReason(BalanceTelemetry &telemetry, const char *message) {
   std::strncpy(telemetry.balanceSafetyReason, message, sizeof(telemetry.balanceSafetyReason) - 1);
   telemetry.balanceSafetyReason[sizeof(telemetry.balanceSafetyReason) - 1] = '\0';
+}
+
+void copyReason(char *reason, size_t reasonSize, const char *message) {
+  if (!reason || reasonSize == 0) {
+    return;
+  }
+  std::strncpy(reason, message, reasonSize - 1);
+  reason[reasonSize - 1] = '\0';
 }
 
 bool readImuLocked(ImuRawSample &sample, const char *&error) {
@@ -304,15 +375,62 @@ void computeBalanceControl(BalanceTelemetry &telemetry, float dtSeconds) {
   telemetry.balanceRightPwm = static_cast<int>(telemetry.balanceOutputClamped);
 }
 
+void applyBalanceMotorOutput(BalanceTelemetry &telemetry) {
+  telemetry.balanceDriveCommandSent = false;
+
+#if BALANCE_MOTOR_OUTPUT_AVAILABLE == 0
+  telemetry.balanceMotorOutputAvailable = false;
+  telemetry.balanceMotorOutputArmed = false;
+  telemetry.balanceMotorOutputEnabled = false;
+  return;
+#else
+  const bool armed = copyArmState();
+  telemetry.balanceMotorOutputAvailable = true;
+  telemetry.balanceMotorOutputArmed = armed;
+  telemetry.balanceMotorOutputEnabled = armed;
+
+  if (!armed) {
+    return;
+  }
+
+  if (!telemetry.balanceControlSafetyOk) {
+    setArmState(false);
+    telemetry.balanceMotorOutputArmed = false;
+    telemetry.balanceMotorOutputEnabled = false;
+    telemetry.balanceIntegralError = 0.0f;
+    queueMotorStop();
+    return;
+  }
+
+  const int pwm = clampPwm(telemetry.balanceOutputClamped * telemetry.balanceMotorSign);
+  telemetry.balanceLeftPwm = pwm;
+  telemetry.balanceRightPwm = pwm;
+
+  if (!g_motorQueue) {
+    return;
+  }
+
+  MotorCommandMsg msg{};
+  msg.cmd = MotorCommand::BalanceDrive;
+  msg.timeoutMs = BALANCE_DRIVE_COMMAND_TIMEOUT_MS;
+  msg.leftPwm = pwm;
+  msg.rightPwm = pwm;
+  telemetry.balanceDriveCommandSent = xQueueSend(g_motorQueue, &msg, 0) == pdPASS;
+#endif
+}
+
 void applyConfigToTelemetry(BalanceTelemetry &telemetry, const BalanceControlConfig &config) {
   telemetry.balanceControllerEnabled = BALANCE_CONTROLLER_COMPUTE_ENABLED != 0;
-  telemetry.balanceMotorOutputEnabled = BALANCE_MOTOR_OUTPUT_ENABLED != 0;
+  telemetry.balanceMotorOutputAvailable = BALANCE_MOTOR_OUTPUT_AVAILABLE != 0;
+  telemetry.balanceMotorOutputArmed = copyArmState();
+  telemetry.balanceMotorOutputEnabled = telemetry.balanceMotorOutputAvailable && telemetry.balanceMotorOutputArmed;
   telemetry.balanceSetpointDeg = config.setpointDeg;
   telemetry.balanceKp = config.kp;
   telemetry.balanceKi = config.ki;
   telemetry.balanceKd = config.kd;
   telemetry.balanceOutputLimit = config.outputLimit;
   telemetry.balanceMaxAbsAngleDeg = config.maxAbsAngleDeg;
+  telemetry.balanceMotorSign = config.motorSign >= 0.0f ? 1.0f : -1.0f;
 }
 
 float clampFloat(float value, float minValue, float maxValue) {
@@ -323,6 +441,20 @@ float clampFloat(float value, float minValue, float maxValue) {
     return maxValue;
   }
   return value;
+}
+
+int clampPwm(float value) {
+  return static_cast<int>(clampFloat(value, -255.0f, 255.0f));
+}
+
+void queueMotorStop() {
+  if (!g_motorQueue) {
+    return;
+  }
+  MotorCommandMsg msg{};
+  msg.cmd = MotorCommand::Stop;
+  msg.timeoutMs = 0;
+  xQueueSend(g_motorQueue, &msg, 0);
 }
 
 void emitSerialTelemetry(const BalanceTelemetry &telemetry) {

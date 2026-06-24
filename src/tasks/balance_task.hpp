@@ -6,13 +6,14 @@
 
 struct BalanceControlConfig {
   BalanceControlConfig() = default;
-  BalanceControlConfig(float setpoint, float kpValue, float kiValue, float kdValue, float limit, float maxAngle)
+  BalanceControlConfig(float setpoint, float kpValue, float kiValue, float kdValue, float limit, float maxAngle, float sign)
       : setpointDeg(setpoint),
         kp(kpValue),
         ki(kiValue),
         kd(kdValue),
         outputLimit(limit),
-        maxAbsAngleDeg(maxAngle) {}
+        maxAbsAngleDeg(maxAngle),
+        motorSign(sign) {}
 
   float setpointDeg = 0.0f;
   float kp = 0.0f;
@@ -20,6 +21,7 @@ struct BalanceControlConfig {
   float kd = 0.0f;
   float outputLimit = 0.0f;
   float maxAbsAngleDeg = 0.0f;
+  float motorSign = 1.0f;
 };
 
 struct BalanceTelemetry {
@@ -30,6 +32,9 @@ struct BalanceTelemetry {
   bool balanceControllerEnabled = false;
   bool balanceControlSafetyOk = false;
   bool balanceMotorOutputEnabled = false;
+  bool balanceMotorOutputAvailable = false;
+  bool balanceMotorOutputArmed = false;
+  bool balanceDriveCommandSent = false;
   uint8_t imuAddress = 0;
   uint8_t whoAmI = 0;
   bool whoAmICompatible = false;
@@ -58,6 +63,7 @@ struct BalanceTelemetry {
   float balanceKd = 0.0f;
   float balanceOutputLimit = 0.0f;
   float balanceMaxAbsAngleDeg = 0.0f;
+  float balanceMotorSign = 1.0f;
   float balanceAngleErrorDeg = 0.0f;
   float balanceIntegralError = 0.0f;
   float balancePTerm = 0.0f;
@@ -79,3 +85,5 @@ void balance_get_status(BalanceTelemetry &out);
 void balance_get_raw(BalanceTelemetry &out);
 void balance_get_config(BalanceControlConfig &out);
 void balance_set_config(const BalanceControlConfig &config);
+bool balance_request_motor_arm(char *reason, size_t reasonSize);
+void balance_request_motor_disarm();
