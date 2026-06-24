@@ -177,10 +177,12 @@ void computeAxisCandidates(const ImuRawSample &sample, BalanceTelemetry &telemet
   telemetry.accelAngleAyAzDeg = atan2f(ay, az) * 57.2957795f;
   telemetry.accelAngleAxAzDeg = atan2f(ax, az) * 57.2957795f;
   telemetry.accelAngleAxAyDeg = atan2f(ax, ay) * 57.2957795f;
+  telemetry.accelTiltXDeg = atan2f(ax, sqrtf((ay * ay) + (az * az))) * 57.2957795f;
   if (!telemetry.axisFilterReady) {
     telemetry.accelAngleAyAzSmoothedDeg = telemetry.accelAngleAyAzDeg;
     telemetry.accelAngleAxAzSmoothedDeg = telemetry.accelAngleAxAzDeg;
     telemetry.accelAngleAxAySmoothedDeg = telemetry.accelAngleAxAyDeg;
+    telemetry.accelTiltXSmoothedDeg = telemetry.accelTiltXDeg;
     telemetry.axisFilterReady = true;
   } else {
     telemetry.accelAngleAyAzSmoothedDeg =
@@ -189,6 +191,8 @@ void computeAxisCandidates(const ImuRawSample &sample, BalanceTelemetry &telemet
         smoothAngleDeg(telemetry.accelAngleAxAzSmoothedDeg, telemetry.accelAngleAxAzDeg, AXIS_CANDIDATE_FILTER_ALPHA);
     telemetry.accelAngleAxAySmoothedDeg =
         smoothAngleDeg(telemetry.accelAngleAxAySmoothedDeg, telemetry.accelAngleAxAyDeg, AXIS_CANDIDATE_FILTER_ALPHA);
+    telemetry.accelTiltXSmoothedDeg =
+        smoothAngleDeg(telemetry.accelTiltXSmoothedDeg, telemetry.accelTiltXDeg, AXIS_CANDIDATE_FILTER_ALPHA);
   }
   telemetry.accelPitchDeg = telemetry.accelAngleAyAzDeg;
 }

@@ -45,6 +45,7 @@ The accelerometer reports gravity projected onto the sensor's X/Y/Z axes. A tilt
 - `accelAngleAyAzDeg`: `atan2(ay, az)`, matching the Elegoo AVR pitch convention.
 - `accelAngleAxAzDeg`: `atan2(ax, az)`, an alternate candidate for a different IMU mounting orientation.
 - `accelAngleAxAyDeg`: `atan2(ax, ay)`, useful when gravity is mostly shared between X and Y.
+- `accelTiltXDeg`: `atan2(ax, sqrt(ay^2 + az^2))`, a pitch-from-X candidate that compares X-axis gravity against the combined non-X gravity magnitude.
 
 The `*SmoothedDeg` fields are low-pass filtered copies for hand validation. The non-smoothed fields remain available for debugging sensor noise and filter lag.
 

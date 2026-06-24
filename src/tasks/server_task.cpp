@@ -218,10 +218,12 @@ static bool handleBalanceStatusRequest(WiFiClient &client, const String &header)
   jsonResponse += ",\"accelAngleAyAzDeg\":" + String(telemetry.accelAngleAyAzDeg, 3);
   jsonResponse += ",\"accelAngleAxAzDeg\":" + String(telemetry.accelAngleAxAzDeg, 3);
   jsonResponse += ",\"accelAngleAxAyDeg\":" + String(telemetry.accelAngleAxAyDeg, 3);
+  jsonResponse += ",\"accelTiltXDeg\":" + String(telemetry.accelTiltXDeg, 3);
   jsonResponse += ",\"axisFilterReady\":" + String(jsonBool(telemetry.axisFilterReady));
   jsonResponse += ",\"accelAngleAyAzSmoothedDeg\":" + String(telemetry.accelAngleAyAzSmoothedDeg, 3);
   jsonResponse += ",\"accelAngleAxAzSmoothedDeg\":" + String(telemetry.accelAngleAxAzSmoothedDeg, 3);
   jsonResponse += ",\"accelAngleAxAySmoothedDeg\":" + String(telemetry.accelAngleAxAySmoothedDeg, 3);
+  jsonResponse += ",\"accelTiltXSmoothedDeg\":" + String(telemetry.accelTiltXSmoothedDeg, 3);
   jsonResponse += ",\"pitchDeg\":" + String(telemetry.pitchDeg, 3);
   jsonResponse += ",\"gyroRateDps\":" + String(telemetry.gyroRateDps, 3);
   jsonResponse += ",\"gyroXRateDps\":" + String(telemetry.gyroXRateDps, 3);

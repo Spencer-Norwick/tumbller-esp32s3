@@ -171,3 +171,17 @@ Result: `atan2(AX, AZ)` and `atan2(AX, AY)` both moved during forward/back rocki
 Takeaway: The forward/back balance axis likely involves the accelerometer X component, but larger amplitude alone is not enough to select `atan2(AX, AY)`. If AY is near zero around the upright pose, `atan2(AX, AY)` can be overly sensitive and less stable than `atan2(AX, AZ)`.
 
 Next action: Run the same cleared-trace test for side-to-side wheel-lift motion and compare peak-to-peak movement. Prefer the candidate that moves strongly during forward/back rocking and weakly during side-to-side rocking.
+
+## 2026-06-24: AX/AY Wrap During Forward/Back Rocking
+
+Goal: Determine whether the high-amplitude `atan2(AX, AY)` response is a usable pitch candidate.
+
+Setup: Balance Lab candidate-delta trace after a few forward/back rocks. Screenshot captured with `AY/AZ movement = 1.47 deg`, `AX/AZ movement = 126.48 deg`, and `AX/AY movement = 179.77 deg`.
+
+Change: Compared trace shape and symmetry, not only peak-to-peak movement.
+
+Result: The `atan2(AX, AY)` trace jumped sharply and was not symmetric around the resting position. It approached a near-180 degree movement range, while `atan2(AX, AZ)` moved more continuously.
+
+Takeaway: `atan2(AX, AY)` is likely crossing an unstable region around the upright pose and should be treated as a debug signal, not the primary pitch estimate. A pitch-from-X candidate should compare AX against the combined non-X gravity magnitude instead of only AY.
+
+Next action: Add `accelTiltXDeg = atan2(ax, sqrt(ay^2 + az^2))` and use it in the dashboard trace for the next forward/back and side-to-side tests.

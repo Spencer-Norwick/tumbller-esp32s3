@@ -20,10 +20,12 @@ struct BalanceTelemetry {
   float accelAngleAyAzDeg = 0.0f;
   float accelAngleAxAzDeg = 0.0f;
   float accelAngleAxAyDeg = 0.0f;
+  float accelTiltXDeg = 0.0f;
   bool axisFilterReady = false;
   float accelAngleAyAzSmoothedDeg = 0.0f;
   float accelAngleAxAzSmoothedDeg = 0.0f;
   float accelAngleAxAySmoothedDeg = 0.0f;
+  float accelTiltXSmoothedDeg = 0.0f;
   float pitchDeg = 0.0f;
   float gyroRateDps = 0.0f;
   float gyroXRateDps = 0.0f;
