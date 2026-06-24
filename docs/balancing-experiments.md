@@ -157,3 +157,17 @@ Result: The original trace mostly moved during side-to-side wheel-lift motion be
 Takeaway: Until the correct mounted pitch axis is selected, the trace should show all candidate angle movement rather than only the current Kalman pitch path.
 
 Next action: Use a candidate-delta trace and recent peak-to-peak movement readouts to compare forward/back rocking against side-to-side rocking.
+
+## 2026-06-24: Forward/Back Candidate Movement
+
+Goal: Identify which accelerometer angle candidates respond to forward/back rocking.
+
+Setup: Balance Lab dashboard using the candidate-delta trace and peak-to-peak movement readouts; robot manually rocked forward/back.
+
+Change: Cleared the trace, then rocked the robot forward/back while comparing `atan2(AY, AZ)`, `atan2(AX, AZ)`, and `atan2(AX, AY)`.
+
+Result: `atan2(AX, AZ)` and `atan2(AX, AY)` both moved during forward/back rocking. `atan2(AX, AY)` appeared to move roughly three times as much as `atan2(AX, AZ)`.
+
+Takeaway: The forward/back balance axis likely involves the accelerometer X component, but larger amplitude alone is not enough to select `atan2(AX, AY)`. If AY is near zero around the upright pose, `atan2(AX, AY)` can be overly sensitive and less stable than `atan2(AX, AZ)`.
+
+Next action: Run the same cleared-trace test for side-to-side wheel-lift motion and compare peak-to-peak movement. Prefer the candidate that moves strongly during forward/back rocking and weakly during side-to-side rocking.
