@@ -33,16 +33,16 @@ void Motor::Stop(int speed)
 
 void Motor::Forward(int speed)
 {
-  digitalWrite(AIN1, 1);
-  digitalWrite(BIN1, 1);
+  digitalWrite(AIN1, 0);
+  digitalWrite(BIN1, 0);
   analogWrite(PWMA_LEFT, speed);
   analogWrite(PWMB_RIGHT, speed);
 }
 
 void Motor::Back(int speed)
 {
-  digitalWrite(AIN1, 0);
-  digitalWrite(BIN1, 0);
+  digitalWrite(AIN1, 1);
+  digitalWrite(BIN1, 1);
   analogWrite(PWMA_LEFT, speed);
   analogWrite(PWMB_RIGHT, speed);
 }
@@ -98,8 +98,8 @@ void Motor::DriveSigned(int leftPwm, int rightPwm)
   const int left = constrain(leftPwm, -255, 255);
   const int right = constrain(rightPwm, -255, 255);
 
-  digitalWrite(AIN1, left >= 0 ? 1 : 0);
-  digitalWrite(BIN1, right >= 0 ? 1 : 0);
+  digitalWrite(AIN1, left >= 0 ? 0 : 1);
+  digitalWrite(BIN1, right >= 0 ? 0 : 1);
   analogWrite(PWMA_LEFT, abs(left));
   analogWrite(PWMB_RIGHT, abs(right));
 }

@@ -325,3 +325,17 @@ Result: Build and upload succeeded. Default state after reset was disarmed. A co
 Takeaway: The first-motion path now has an explicit software arm gate, dashboard kill controls, and expected refusal behavior when prerequisites are not met.
 
 Next action: Put the robot wheels-down near upright, recalibrate gyro while stationary, verify `balanceControlSafetyOk=true`, then arm briefly with one hand ready to catch and use Space/Escape to disarm.
+
+## 2026-06-24: First Controlled Motion and Motor Polarity
+
+Goal: Confirm that the runtime arm path can produce real motor motion, then verify wheel polarity before deeper balance tuning.
+
+Setup: Runtime config `Kp=10.0`, `Ki=0.0`, `Kd=0.2`, output limit `45 pwm`, max angle `10 deg`, `motorSign=+1`. Robot held near upright for the balance arm test, then held wheels-up for motor diagnostics.
+
+Change: Armed balance briefly through the dashboard after gyro calibration and safety-gate verification. Then used one-wheel diagnostic endpoints with `hold=1` to observe each motor direction.
+
+Result: Balance arm produced audible/visible motor correction when the robot was tipped slightly. One-wheel diagnostics showed the same polarity on both sides: `left-high` moved the left wheel backward, `left-low` moved the left wheel forward, `right-high` moved the right wheel backward, and `right-low` moved the right wheel forward.
+
+Takeaway: The balance output path reaches the motors. The motor driver polarity convention needed correction because `HIGH` on both direction pins maps to physical backward and `LOW` maps to physical forward.
+
+Next action: Patch the motor driver so `Forward` and positive signed balance PWM mean physical forward, rebuild/upload, and repeat a short armed balance test.
