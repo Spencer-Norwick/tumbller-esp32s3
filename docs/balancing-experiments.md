@@ -143,3 +143,17 @@ Result: The raw candidate values were too jumpy for easy hand interpretation, an
 Takeaway: Sensor-validation telemetry needs both machine-useful raw values and human-readable, smoothed readouts for bring-up work.
 
 Next action: Add low-pass filtered `*SmoothedDeg` fields to `/balance/status`, keep raw candidate fields, and update dashboard labels to show the `atan2(...)` convention directly.
+
+## 2026-06-24: Axis Trace Selection
+
+Goal: Make the dashboard trace useful for identifying the forward/back balance axis.
+
+Setup: Balance Lab dashboard polling `/balance/status`; robot manually rocked forward/back and side-to-side.
+
+Change: Compared dashboard trace response against the numeric axis-candidate readouts.
+
+Result: The original trace mostly moved during side-to-side wheel-lift motion because it plotted the legacy `pitchDeg`/`gyroRateDps` path, which still follows the Elegoo `atan2(ay, az)` and gyro-X convention.
+
+Takeaway: Until the correct mounted pitch axis is selected, the trace should show all candidate angle movement rather than only the current Kalman pitch path.
+
+Next action: Use a candidate-delta trace and recent peak-to-peak movement readouts to compare forward/back rocking against side-to-side rocking.
