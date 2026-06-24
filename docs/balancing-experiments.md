@@ -269,3 +269,17 @@ Result: Build and upload succeeded. `/balance/status` reported `accelPitchSource
 Takeaway: The selected mounted pitch path is now deployed and stationary gyro-Y calibration behaves correctly. No motor output is enabled.
 
 Next action: Repeat the trace test with deliberate forward/back rocking and confirm `pitchDeg` follows X tilt dynamically while side-to-side roll is rejected.
+
+## 2026-06-24: Mounted Pitch Dynamic Forward/Back Validation
+
+Goal: Confirm the deployed `accelTiltXDeg + gyroYRateDps` path responds to deliberate forward/back rocking and rejects side-to-side roll.
+
+Setup: Balance Lab dashboard after upload and stationary gyro-Y calibration. The trace was cleared, the robot was slowly rocked forward/back, then returned to upright stationary.
+
+Change: Compared dashboard movement ranges for angle candidates and gyro axes after the forward/back rocking trace.
+
+Result: X tilt moved `64.53 deg` during the trace, while `atan2(AY, AZ)` moved only `0.24 deg`. `atan2(AX, AY)` moved `178.75 deg`, consistent with the known near-upright wrap behavior. Gyro Y showed the dominant rate movement at `20.95 dps`; gyro X moved `0.30 dps` and gyro Z moved `1.52 dps`. After returning upright, `/balance/status` reported `pitchDeg=-0.622 deg`, `accelPitchSource="accelTiltXDeg"`, `gyroRateSource="gyroYRateDps"`, `gyroRateDps=-0.036`, `balanceMotorOutputEnabled=false`, `failedReadCount=0`, and `lastError="ok"`.
+
+Takeaway: The deployed validation path correctly selects the forward/back mounted pitch axis. X tilt is the pitch angle candidate, gyro Y is the pitch-rate candidate, AY/AZ is rejected as roll for this mounting, and AX/AY remains a diagnostic wrap signal.
+
+Next action: Add pre-motor balance-control scaffolding: explicit enable gate, PID/output telemetry, and safety constraints, with computed motor output still disabled by default.
