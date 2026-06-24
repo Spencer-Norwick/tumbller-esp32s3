@@ -199,3 +199,17 @@ Result: Forward tilt produced visible X-tilt trace movement. During backward til
 Takeaway: A dashboard offline state means the HTTP telemetry path failed, not necessarily that IMU reads failed. The position-dependent behavior may be WiFi orientation, USB/power strain, loose wiring, or firmware HTTP overload, so we need an observability channel that bypasses WiFi.
 
 Next action: Add low-rate USB serial `balance_csv` telemetry and repeat the tilt test with a serial monitor open. If serial keeps streaming while WiFi drops, debug WiFi/HTTP/tooling. If serial stops or resets, inspect power, USB cable strain, and wiring.
+
+## 2026-06-24: X-Tilt Candidate Shape
+
+Goal: Compare `accelTiltXDeg` against the wrapping `atan2(AX, AY)` signal during slow forward/back rocking.
+
+Setup: Balance Lab dashboard after adding the X-tilt candidate. Robot was slowly rocked forward/back near upright.
+
+Change: Observed the trace shape for `atan2(AY, AZ)`, X tilt, and `atan2(AX, AY)`.
+
+Result: X tilt moved smoothly through the forward/back rocking motion. `atan2(AX, AY)` jumped across the plot axis as the robot approached and crossed the upright balance point.
+
+Takeaway: X tilt is the leading accelerometer pitch candidate for forward/back balance on this mounting. `atan2(AX, AY)` should remain visible as a diagnostic signal only, because it wraps near upright.
+
+Next action: Run the same cleared-trace test for side-to-side wheel-lift motion. If X tilt remains comparatively quiet during side-to-side motion, use X tilt plus the matching gyro axis as the next Kalman pitch input.
