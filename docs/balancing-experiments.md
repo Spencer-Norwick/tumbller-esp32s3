@@ -213,3 +213,17 @@ Result: X tilt moved smoothly through the forward/back rocking motion. `atan2(AX
 Takeaway: X tilt is the leading accelerometer pitch candidate for forward/back balance on this mounting. `atan2(AX, AY)` should remain visible as a diagnostic signal only, because it wraps near upright.
 
 Next action: Run the same cleared-trace test for side-to-side wheel-lift motion. If X tilt remains comparatively quiet during side-to-side motion, use X tilt plus the matching gyro axis as the next Kalman pitch input.
+
+## 2026-06-24: Side-to-Side Roll Candidate Shape
+
+Goal: Confirm which candidate represents side-to-side roll when lifting one wheel at a time.
+
+Setup: Balance Lab dashboard after adding the X-tilt candidate. Robot was tilted side-to-side by lifting one wheel, then the other.
+
+Change: Observed the trace shape for `atan2(AY, AZ)`, X tilt, and `atan2(AX, AY)` during wheel-lift roll motion.
+
+Result: `atan2(AY, AZ)` moved smoothly and symmetrically across the resting axis during side-to-side roll. X tilt did not show the same clean roll-centered shape. `atan2(AX, AY)` continued to show wrap-like behavior.
+
+Takeaway: `atan2(AY, AZ)` is the roll-axis candidate on this mounting. This reinforces that the original Elegoo `atan2(ay, az)` pitch convention does not map directly to forward/back pitch on the ESP32S3 Tumbller hardware.
+
+Next action: Identify the gyro axis that best matches X-tilt forward/back pitch motion, then switch the validation Kalman path from the Elegoo AY/AZ + gyro-X convention to the mounted X-tilt + matching-gyro convention.

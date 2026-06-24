@@ -50,6 +50,12 @@ The accelerometer reports gravity projected onto the sensor's X/Y/Z axes. A tilt
 
 The `*SmoothedDeg` fields are low-pass filtered copies for hand validation. The non-smoothed fields remain available for debugging sensor noise and filter lag.
 
+Current hand-test interpretation:
+
+- `accelTiltXDeg` is the leading forward/back pitch candidate.
+- `accelAngleAyAzDeg` behaves like side-to-side roll on this mounting.
+- `accelAngleAxAyDeg` wraps near upright and should remain a diagnostic signal, not a control input.
+
 ## Milestone Checklist
 
 - [x] Preserve motor diagnostic bring-up work on a dedicated branch.
