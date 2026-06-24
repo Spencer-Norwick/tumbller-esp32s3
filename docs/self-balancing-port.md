@@ -64,6 +64,18 @@ Selected validation path:
 - The Kalman pitch estimate uses `accelTiltXDeg + gyroYRateDps` for validation only.
 - `balanceMotorOutputEnabled` remains `false`; the selected pitch path is not yet allowed to drive motors.
 
+## Balance Control Preview
+
+The first controller milestone computes a proposed balance output without applying it to the motors.
+
+- Gains start from the Elegoo vertical-ring reference: `Kp=55.0`, `Ki=0.0`, `Kd=0.75`.
+- The preview controller computes `P`, `I`, `D`, raw output, clamped output, and proposed left/right PWM.
+- With `Ki=0.0`, the integral accumulator is held at zero to avoid hidden windup before integral tuning is deliberately enabled.
+- Safety gates require a healthy sensor read, completed gyro calibration, and pitch within `+/-22 deg`.
+- If a gate fails, the clamped output is forced to zero and `/balance/status` reports `balanceSafetyReason`.
+- `BALANCE_MOTOR_OUTPUT_ENABLED` remains `0`; balance code still does not call motor drive methods.
+- Manual `/motor/*` diagnostics remain separate from balance telemetry.
+
 ## Milestone Checklist
 
 - [x] Preserve motor diagnostic bring-up work on a dedicated branch.
@@ -73,4 +85,5 @@ Selected validation path:
 - [x] Build and expose pitch/Kalman telemetry.
 - [x] Validate `/i2c/scan`, `/imu/raw`, and `/balance/status` on hardware.
 - [x] Record hardware validation results in `docs/balancing-experiments.md`.
+- [x] Add preview-only balance PID/output telemetry with motor writes disabled.
 - [ ] Only after validation: plan motor-output balance loop as a separate milestone.

@@ -283,3 +283,17 @@ Result: X tilt moved `64.53 deg` during the trace, while `atan2(AY, AZ)` moved o
 Takeaway: The deployed validation path correctly selects the forward/back mounted pitch axis. X tilt is the pitch angle candidate, gyro Y is the pitch-rate candidate, AY/AZ is rejected as roll for this mounting, and AX/AY remains a diagnostic wrap signal.
 
 Next action: Add pre-motor balance-control scaffolding: explicit enable gate, PID/output telemetry, and safety constraints, with computed motor output still disabled by default.
+
+## 2026-06-24: Preview-Only Balance Controller Scaffolding
+
+Goal: Add enough controller structure to inspect proposed balance output before allowing any automatic motor writes.
+
+Setup: Firmware after mounted pitch dynamic validation. Motor output is intentionally disabled by configuration.
+
+Change: Added preview controller telemetry using `pitchDeg` and `gyroYRateDps`, starting from the Elegoo vertical-ring reference gains `Kp=55.0`, `Ki=0.0`, and `Kd=0.75`. Added safety gates for sensor health, completed gyro calibration, and a `+/-22 deg` pitch window. Added `/balance/status` fields for controller enabled state, safety state, safety reason, gains, P/I/D terms, raw output, clamped output, and proposed left/right PWM. Held the integral accumulator at zero while `Ki=0.0`.
+
+Result: Build and upload succeeded. Before calibration, `/balance/status` reported `balanceControlSafetyOk=false`, `balanceSafetyReason="not calibrated"`, and `balanceOutputClamped=0.000` despite nonzero raw output. After calibration, stationary telemetry reported `balanceControlSafetyOk=true`, `balanceMotorOutputEnabled=false`, `balanceIntegralError=0.000`, and proposed output around `39 pwm` near `0.7 deg` pitch. During a forward/back hand-rock trace, X tilt moved `92.78 deg`, gyro Y moved `38.22 dps`, and proposed output reached the clamp in both directions: `-255.0 / 255.0 pwm`.
+
+Takeaway: The preview scaffolding works and remains non-actuating. The Elegoo reference gains are high enough to saturate the preview output during large hand-rock tests, so the next tuning step should use smaller preview gains or constrained near-upright tests before any motor-apply milestone.
+
+Next action: Add runtime tuning or a reduced-gain preview profile, then validate proposed output polarity and magnitude with small near-upright pitch motions before enabling any balance motor writes.

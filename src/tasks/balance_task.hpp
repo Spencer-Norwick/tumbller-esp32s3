@@ -9,6 +9,8 @@ struct BalanceTelemetry {
   bool lastReadOk = false;
   bool calibrated = false;
   bool calibrationInProgress = false;
+  bool balanceControllerEnabled = false;
+  bool balanceControlSafetyOk = false;
   bool balanceMotorOutputEnabled = false;
   uint8_t imuAddress = 0;
   uint8_t whoAmI = 0;
@@ -32,9 +34,23 @@ struct BalanceTelemetry {
   float gyroYRateDps = 0.0f;
   float gyroZRateDps = 0.0f;
   float gyroBiasRaw = 0.0f;
+  float balanceSetpointDeg = 0.0f;
+  float balanceKp = 0.0f;
+  float balanceKi = 0.0f;
+  float balanceKd = 0.0f;
+  float balanceAngleErrorDeg = 0.0f;
+  float balanceIntegralError = 0.0f;
+  float balancePTerm = 0.0f;
+  float balanceITerm = 0.0f;
+  float balanceDTerm = 0.0f;
+  float balanceOutputRaw = 0.0f;
+  float balanceOutputClamped = 0.0f;
+  int balanceLeftPwm = 0;
+  int balanceRightPwm = 0;
   float loopDtMs = 0.0f;
   ImuRawSample raw;
   char lastError[48] = "not started";
+  char balanceSafetyReason[48] = "not evaluated";
 };
 
 void balance_task_start();

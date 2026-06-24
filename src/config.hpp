@@ -36,5 +36,17 @@
 #define BALANCE_SERIAL_TELEMETRY 1
 #define BALANCE_SERIAL_TELEMETRY_MS 100
 
+// Balance controller scaffolding. This computes proposed output telemetry only.
+// Motor writes remain disabled unless a later milestone deliberately adds and
+// validates an apply path.
+#define BALANCE_CONTROLLER_COMPUTE_ENABLED 1
+#define BALANCE_MOTOR_OUTPUT_ENABLED 0
+#define BALANCE_ANGLE_SETPOINT_DEG 0.0f
+#define BALANCE_PID_KP 55.0f
+#define BALANCE_PID_KI 0.0f
+#define BALANCE_PID_KD 0.75f
+#define BALANCE_PID_OUTPUT_LIMIT 255.0f
+#define BALANCE_CONTROL_MAX_ABS_ANGLE_DEG 22.0f
+
 // WiFi / mDNS hostname
 #define WIFI_HOSTNAME "finland-tumbller-01"

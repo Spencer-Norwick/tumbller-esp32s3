@@ -21,10 +21,13 @@ void balanceTask(void *pvParameters);
 void publishTelemetry(const BalanceTelemetry &telemetry);
 void copyTelemetry(BalanceTelemetry &out);
 void setError(BalanceTelemetry &telemetry, const char *message);
+void setBalanceSafetyReason(BalanceTelemetry &telemetry, const char *message);
 bool readImuLocked(ImuRawSample &sample, const char *&error);
 bool runPitchGyroCalibration(float &gyroBiasRaw, BalanceTelemetry &telemetry);
 float smoothAngleDeg(float previousDeg, float nextDeg, float alpha);
 void computeAxisCandidates(const ImuRawSample &sample, BalanceTelemetry &telemetry);
+void computeBalanceControl(BalanceTelemetry &telemetry, float dtSeconds);
+float clampFloat(float value, float minValue, float maxValue);
 void emitSerialTelemetry(const BalanceTelemetry &telemetry);
 }  // namespace
 
@@ -51,7 +54,13 @@ void balanceTask(void *pvParameters) {
 
   BalanceTelemetry telemetry;
   telemetry.imuAddress = IMU_I2C_ADDR;
-  telemetry.balanceMotorOutputEnabled = false;
+  telemetry.balanceControllerEnabled = BALANCE_CONTROLLER_COMPUTE_ENABLED != 0;
+  telemetry.balanceMotorOutputEnabled = BALANCE_MOTOR_OUTPUT_ENABLED != 0;
+  telemetry.balanceSetpointDeg = BALANCE_ANGLE_SETPOINT_DEG;
+  telemetry.balanceKp = BALANCE_PID_KP;
+  telemetry.balanceKi = BALANCE_PID_KI;
+  telemetry.balanceKd = BALANCE_PID_KD;
+  setBalanceSafetyReason(telemetry, "not calibrated");
 
   if (i2c_lock(pdMS_TO_TICKS(500))) {
     telemetry.imuReady = g_imu.begin(Wire, IMU_I2C_ADDR);
@@ -76,6 +85,7 @@ void balanceTask(void *pvParameters) {
       telemetry.gyroBiasRaw = gyroBiasRaw;
       telemetry.calibrationInProgress = false;
       g_pitchFilter.reset(telemetry.accelPitchDeg);
+      telemetry.balanceIntegralError = 0.0f;
       publishTelemetry(telemetry);
     }
 
@@ -105,9 +115,11 @@ void balanceTask(void *pvParameters) {
       telemetry.gyroZRateDps = static_cast<float>(sample.gz) / 131.0f;
       g_pitchFilter.update(telemetry.accelPitchDeg, gyroRateDps, dtSeconds);
       telemetry.pitchDeg = g_pitchFilter.angleDeg();
+      computeBalanceControl(telemetry, dtSeconds);
       setError(telemetry, "ok");
     } else {
       telemetry.failedReadCount++;
+      computeBalanceControl(telemetry, dtSeconds);
       setError(telemetry, telemetry.imuReady ? readError : "imu not ready");
     }
 
@@ -132,6 +144,11 @@ void copyTelemetry(BalanceTelemetry &out) {
 void setError(BalanceTelemetry &telemetry, const char *message) {
   std::strncpy(telemetry.lastError, message, sizeof(telemetry.lastError) - 1);
   telemetry.lastError[sizeof(telemetry.lastError) - 1] = '\0';
+}
+
+void setBalanceSafetyReason(BalanceTelemetry &telemetry, const char *message) {
+  std::strncpy(telemetry.balanceSafetyReason, message, sizeof(telemetry.balanceSafetyReason) - 1);
+  telemetry.balanceSafetyReason[sizeof(telemetry.balanceSafetyReason) - 1] = '\0';
 }
 
 bool readImuLocked(ImuRawSample &sample, const char *&error) {
@@ -219,6 +236,63 @@ float smoothAngleDeg(float previousDeg, float nextDeg, float alpha) {
   return smoothed;
 }
 
+void computeBalanceControl(BalanceTelemetry &telemetry, float dtSeconds) {
+  telemetry.balanceControllerEnabled = BALANCE_CONTROLLER_COMPUTE_ENABLED != 0;
+  telemetry.balanceMotorOutputEnabled = BALANCE_MOTOR_OUTPUT_ENABLED != 0;
+  telemetry.balanceSetpointDeg = BALANCE_ANGLE_SETPOINT_DEG;
+  telemetry.balanceKp = BALANCE_PID_KP;
+  telemetry.balanceKi = BALANCE_PID_KI;
+  telemetry.balanceKd = BALANCE_PID_KD;
+  telemetry.balanceAngleErrorDeg = telemetry.pitchDeg - telemetry.balanceSetpointDeg;
+
+  telemetry.balanceControlSafetyOk = false;
+  if (!telemetry.balanceControllerEnabled) {
+    telemetry.balanceIntegralError = 0.0f;
+    setBalanceSafetyReason(telemetry, "controller disabled");
+  } else if (!telemetry.lastReadOk) {
+    telemetry.balanceIntegralError = 0.0f;
+    setBalanceSafetyReason(telemetry, "sensor read failed");
+  } else if (!telemetry.calibrated) {
+    telemetry.balanceIntegralError = 0.0f;
+    setBalanceSafetyReason(telemetry, "not calibrated");
+  } else if (fabsf(telemetry.pitchDeg) > BALANCE_CONTROL_MAX_ABS_ANGLE_DEG) {
+    telemetry.balanceIntegralError = 0.0f;
+    setBalanceSafetyReason(telemetry, "angle outside safe window");
+  } else {
+    telemetry.balanceControlSafetyOk = true;
+    setBalanceSafetyReason(telemetry, "ok");
+    if (telemetry.balanceKi != 0.0f) {
+      telemetry.balanceIntegralError += telemetry.balanceAngleErrorDeg * dtSeconds;
+    } else {
+      telemetry.balanceIntegralError = 0.0f;
+    }
+  }
+
+  telemetry.balancePTerm = telemetry.balanceKp * telemetry.balanceAngleErrorDeg;
+  telemetry.balanceITerm = telemetry.balanceKi * telemetry.balanceIntegralError;
+  telemetry.balanceDTerm = telemetry.balanceKd * telemetry.gyroRateDps;
+  telemetry.balanceOutputRaw = telemetry.balancePTerm + telemetry.balanceITerm + telemetry.balanceDTerm;
+  telemetry.balanceOutputClamped =
+      clampFloat(telemetry.balanceOutputRaw, -BALANCE_PID_OUTPUT_LIMIT, BALANCE_PID_OUTPUT_LIMIT);
+
+  if (!telemetry.balanceControlSafetyOk) {
+    telemetry.balanceOutputClamped = 0.0f;
+  }
+
+  telemetry.balanceLeftPwm = static_cast<int>(telemetry.balanceOutputClamped);
+  telemetry.balanceRightPwm = static_cast<int>(telemetry.balanceOutputClamped);
+}
+
+float clampFloat(float value, float minValue, float maxValue) {
+  if (value < minValue) {
+    return minValue;
+  }
+  if (value > maxValue) {
+    return maxValue;
+  }
+  return value;
+}
+
 void emitSerialTelemetry(const BalanceTelemetry &telemetry) {
 #if defined(USE_SERIAL) && defined(BALANCE_SERIAL_TELEMETRY)
   static bool headerPrinted = false;
@@ -232,7 +306,8 @@ void emitSerialTelemetry(const BalanceTelemetry &telemetry) {
   if (!headerPrinted) {
     Serial.println(
         "balance_csv,ms,lastReadOk,calibrated,loopDtMs,failedReadCount,accelTiltXSmoothedDeg,accelTiltXDeg,"
-        "accelAngleAyAzSmoothedDeg,accelAngleAxAySmoothedDeg,gyroXRateDps,gyroYRateDps,gyroZRateDps,lastError");
+        "accelAngleAyAzSmoothedDeg,accelAngleAxAySmoothedDeg,gyroXRateDps,gyroYRateDps,gyroZRateDps,"
+        "balanceControlSafetyOk,balanceOutputClamped,balanceSafetyReason,lastError");
     headerPrinted = true;
   }
 
@@ -260,6 +335,12 @@ void emitSerialTelemetry(const BalanceTelemetry &telemetry) {
   Serial.print(telemetry.gyroYRateDps, 3);
   Serial.print(",");
   Serial.print(telemetry.gyroZRateDps, 3);
+  Serial.print(",");
+  Serial.print(telemetry.balanceControlSafetyOk ? 1 : 0);
+  Serial.print(",");
+  Serial.print(telemetry.balanceOutputClamped, 3);
+  Serial.print(",");
+  Serial.print(telemetry.balanceSafetyReason);
   Serial.print(",");
   Serial.println(telemetry.lastError);
 #endif
