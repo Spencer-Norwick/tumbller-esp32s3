@@ -8,6 +8,7 @@
 
 #include "task_common.hpp"
 #include "balance_task.hpp"
+#include "motor_task.hpp"
 #include "server_task.hpp"
 
 static WiFiServer server(80);
@@ -20,6 +21,8 @@ static String hexByte(uint8_t value);
 static bool handleInfoRequest(WiFiClient &client, const String &header);
 static bool handleI2cScanRequest(WiFiClient &client, const String &header);
 static bool handleImuRawRequest(WiFiClient &client, const String &header);
+static bool handleEncoderStatusRequest(WiFiClient &client, const String &header);
+static bool handleEncoderResetRequest(WiFiClient &client, const String &header);
 static bool handleBalanceConfigRequest(WiFiClient &client, const String &header);
 static bool handleBalanceArmRequest(WiFiClient &client, const String &header);
 static bool handleBalanceDisarmRequest(WiFiClient &client, const String &header);
@@ -83,6 +86,8 @@ static void serverTask(void *pvParameters) {
             if (handleInfoRequest(client, header)) break;
             if (handleI2cScanRequest(client, header)) break;
             if (handleImuRawRequest(client, header)) break;
+            if (handleEncoderStatusRequest(client, header)) break;
+            if (handleEncoderResetRequest(client, header)) break;
             if (handleBalanceConfigRequest(client, header)) break;
             if (handleBalanceArmRequest(client, header)) break;
             if (handleBalanceDisarmRequest(client, header)) break;
@@ -204,6 +209,37 @@ static bool handleImuRawRequest(WiFiClient &client, const String &header) {
   return true;
 }
 
+static bool handleEncoderStatusRequest(WiFiClient &client, const String &header) {
+  if (header.indexOf("GET /encoder/status") < 0) return false;
+
+  EncoderTelemetry telemetry;
+  motor_get_encoder_status(telemetry);
+  String jsonResponse = "{";
+  jsonResponse += "\"initialized\":" + String(jsonBool(telemetry.initialized));
+  jsonResponse += ",\"updatedAtMs\":" + String(telemetry.updatedAtMs);
+  jsonResponse += ",\"windowMs\":" + String(telemetry.windowMs);
+  jsonResponse += ",\"totalLeft\":" + String(telemetry.totalLeft);
+  jsonResponse += ",\"totalRight\":" + String(telemetry.totalRight);
+  jsonResponse += ",\"deltaLeft\":" + String(telemetry.deltaLeft);
+  jsonResponse += ",\"deltaRight\":" + String(telemetry.deltaRight);
+  jsonResponse += ",\"leftRatePps\":" + String(telemetry.leftRatePps, 3);
+  jsonResponse += ",\"rightRatePps\":" + String(telemetry.rightRatePps, 3);
+  jsonResponse += ",\"combinedSpeedPulses\":" + String(telemetry.combinedSpeedPulses, 3);
+  jsonResponse += ",\"speedFilter\":" + String(telemetry.speedFilter, 3);
+  jsonResponse += ",\"sampleCount\":" + String(telemetry.sampleCount);
+  jsonResponse += "}";
+  sendJson(client, "HTTP/1.1 200 OK", jsonResponse);
+  return true;
+}
+
+static bool handleEncoderResetRequest(WiFiClient &client, const String &header) {
+  if (header.indexOf("GET /encoder/reset") < 0) return false;
+
+  motor_reset_encoder_counts();
+  sendJson(client, "HTTP/1.1 200 OK", "{\"reset\":true}");
+  return true;
+}
+
 static bool handleBalanceStatusRequest(WiFiClient &client, const String &header) {
   if (header.indexOf("GET /balance/status") < 0) return false;
 
@@ -261,6 +297,16 @@ static bool handleBalanceStatusRequest(WiFiClient &client, const String &header)
   jsonResponse += ",\"balanceOutputClamped\":" + String(telemetry.balanceOutputClamped, 3);
   jsonResponse += ",\"balanceLeftPwm\":" + String(telemetry.balanceLeftPwm);
   jsonResponse += ",\"balanceRightPwm\":" + String(telemetry.balanceRightPwm);
+  jsonResponse += ",\"speedLoopReady\":" + String(jsonBool(telemetry.speedLoopReady));
+  jsonResponse += ",\"encoderTotalLeft\":" + String(telemetry.encoderTotalLeft);
+  jsonResponse += ",\"encoderTotalRight\":" + String(telemetry.encoderTotalRight);
+  jsonResponse += ",\"speedLoopDeltaLeft\":" + String(telemetry.speedLoopDeltaLeft);
+  jsonResponse += ",\"speedLoopDeltaRight\":" + String(telemetry.speedLoopDeltaRight);
+  jsonResponse += ",\"speedLoopCarSpeed\":" + String(telemetry.speedLoopCarSpeed, 3);
+  jsonResponse += ",\"speedLoopFilter\":" + String(telemetry.speedLoopFilter, 3);
+  jsonResponse += ",\"speedLoopIntegral\":" + String(telemetry.speedLoopIntegral, 3);
+  jsonResponse += ",\"speedLoopOutput\":" + String(telemetry.speedLoopOutput, 3);
+  jsonResponse += ",\"speedLoopSampleCount\":" + String(telemetry.speedLoopSampleCount);
   jsonResponse += ",\"balanceSafetyReason\":\"" + String(telemetry.balanceSafetyReason) + "\"";
   jsonResponse += ",\"lastError\":\"" + String(telemetry.lastError) + "\"";
   jsonResponse += "}";

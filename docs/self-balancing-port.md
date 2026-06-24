@@ -81,6 +81,12 @@ The first controller milestone computes a proposed balance output without applyi
 - `/balance/disarm` clears the runtime arm state and queues a motor stop.
 - `/balance/config` includes `motorSign` so first-motion polarity can be flipped without rebuilding.
 - Manual `/motor/*` diagnostics remain separate from balance telemetry.
+- Encoders are initialized by the motor task and exposed at `/encoder/status`.
+- Encoder speed telemetry uses Elegoo's 40 ms speed-window shape: left/right pulse deltas are averaged into `combinedSpeedPulses`, then filtered as `old * 0.7 + sample * 0.3`.
+- Current encoder reads are single-channel pulse counts, not quadrature direction. Direction for speed-loop integration must be inferred from the commanded wheel PWM sign, matching Elegoo's `pwm_left < 0 ? -count : count` pattern.
+- `/encoder/reset` clears pulse totals and the speed-filter baseline for validation runs.
+- `/balance/status` now exposes an Elegoo-style speed-loop preview: signed encoder deltas, `speedLoopCarSpeed`, `speedLoopFilter`, `speedLoopIntegral`, and `speedLoopOutput`.
+- Speed-loop preview is observability only. It does not modify `balanceOutputClamped`, left/right PWM, or motor commands.
 
 ## Milestone Checklist
 
@@ -93,4 +99,7 @@ The first controller milestone computes a proposed balance output without applyi
 - [x] Record hardware validation results in `docs/balancing-experiments.md`.
 - [x] Add preview-only balance PID/output telemetry with motor writes disabled.
 - [x] Add explicit runtime arm/disarm path for first-motion testing.
-- [ ] Validate first controlled balance motor motion on hardware.
+- [x] Validate first controlled balance motor motion on hardware.
+- [x] Expose encoder telemetry and validate left/right pulse counts.
+- [x] Port Elegoo's encoder-based speed loop into preview telemetry.
+- [ ] Validate speed-loop preview signs during short wheels-up balance-drive tests.

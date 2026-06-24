@@ -7,6 +7,7 @@
 
 #include "../config.hpp"
 #include "../drivers/KalmanPitch.hpp"
+#include "motor_task.hpp"
 #include "task_common.hpp"
 
 namespace {
@@ -28,6 +29,9 @@ portMUX_TYPE g_configMux = portMUX_INITIALIZER_UNLOCKED;
 portMUX_TYPE g_armMux = portMUX_INITIALIZER_UNLOCKED;
 volatile bool g_calibrationRequested = false;
 bool g_balanceMotorArmed = false;
+unsigned long g_speedLoopLastEncoderLeft = 0;
+unsigned long g_speedLoopLastEncoderRight = 0;
+uint8_t g_speedLoopPeriodCount = 0;
 
 void balanceTask(void *pvParameters);
 void publishTelemetry(const BalanceTelemetry &telemetry);
@@ -43,6 +47,7 @@ bool runPitchGyroCalibration(float &gyroBiasRaw, BalanceTelemetry &telemetry);
 float smoothAngleDeg(float previousDeg, float nextDeg, float alpha);
 void computeAxisCandidates(const ImuRawSample &sample, BalanceTelemetry &telemetry);
 void computeBalanceControl(BalanceTelemetry &telemetry, float dtSeconds);
+void computeSpeedLoopPreview(BalanceTelemetry &telemetry);
 void applyBalanceMotorOutput(BalanceTelemetry &telemetry);
 void applyConfigToTelemetry(BalanceTelemetry &telemetry, const BalanceControlConfig &config);
 float clampFloat(float value, float minValue, float maxValue);
@@ -151,6 +156,11 @@ void balanceTask(void *pvParameters) {
       telemetry.calibrationInProgress = false;
       g_pitchFilter.reset(telemetry.accelPitchDeg);
       telemetry.balanceIntegralError = 0.0f;
+      telemetry.speedLoopFilter = 0.0f;
+      telemetry.speedLoopIntegral = 0.0f;
+      telemetry.speedLoopOutput = 0.0f;
+      telemetry.speedLoopSampleCount = 0;
+      telemetry.speedLoopReady = false;
       setArmState(false);
       queueMotorStop();
       publishTelemetry(telemetry);
@@ -183,10 +193,12 @@ void balanceTask(void *pvParameters) {
       g_pitchFilter.update(telemetry.accelPitchDeg, gyroRateDps, dtSeconds);
       telemetry.pitchDeg = g_pitchFilter.angleDeg();
       computeBalanceControl(telemetry, dtSeconds);
+      computeSpeedLoopPreview(telemetry);
       setError(telemetry, "ok");
     } else {
       telemetry.failedReadCount++;
       computeBalanceControl(telemetry, dtSeconds);
+      computeSpeedLoopPreview(telemetry);
       setError(telemetry, telemetry.imuReady ? readError : "imu not ready");
     }
 
@@ -373,6 +385,61 @@ void computeBalanceControl(BalanceTelemetry &telemetry, float dtSeconds) {
 
   telemetry.balanceLeftPwm = static_cast<int>(telemetry.balanceOutputClamped);
   telemetry.balanceRightPwm = static_cast<int>(telemetry.balanceOutputClamped);
+}
+
+void computeSpeedLoopPreview(BalanceTelemetry &telemetry) {
+  EncoderTelemetry encoder;
+  motor_get_encoder_status(encoder);
+  telemetry.encoderTotalLeft = encoder.totalLeft;
+  telemetry.encoderTotalRight = encoder.totalRight;
+
+  if (!encoder.initialized) {
+    telemetry.speedLoopReady = false;
+    telemetry.speedLoopDeltaLeft = 0;
+    telemetry.speedLoopDeltaRight = 0;
+    telemetry.speedLoopCarSpeed = 0.0f;
+    telemetry.speedLoopOutput = 0.0f;
+    return;
+  }
+
+  if (!telemetry.speedLoopReady || encoder.totalLeft < g_speedLoopLastEncoderLeft ||
+      encoder.totalRight < g_speedLoopLastEncoderRight) {
+    g_speedLoopLastEncoderLeft = encoder.totalLeft;
+    g_speedLoopLastEncoderRight = encoder.totalRight;
+    g_speedLoopPeriodCount = 0;
+    telemetry.speedLoopReady = true;
+    telemetry.speedLoopDeltaLeft = 0;
+    telemetry.speedLoopDeltaRight = 0;
+    telemetry.speedLoopCarSpeed = 0.0f;
+    telemetry.speedLoopFilter = 0.0f;
+    telemetry.speedLoopIntegral = 0.0f;
+    telemetry.speedLoopOutput = 0.0f;
+    return;
+  }
+
+  g_speedLoopPeriodCount++;
+  if (g_speedLoopPeriodCount < BALANCE_SPEED_LOOP_PERIODS) {
+    return;
+  }
+  g_speedLoopPeriodCount = 0;
+
+  const long rawDeltaLeft = static_cast<long>(encoder.totalLeft - g_speedLoopLastEncoderLeft);
+  const long rawDeltaRight = static_cast<long>(encoder.totalRight - g_speedLoopLastEncoderRight);
+  g_speedLoopLastEncoderLeft = encoder.totalLeft;
+  g_speedLoopLastEncoderRight = encoder.totalRight;
+
+  const float signedBalanceCommand = telemetry.balanceOutputClamped * telemetry.balanceMotorSign;
+  const int directionSign = signedBalanceCommand < 0.0f ? -1 : 1;
+  telemetry.speedLoopDeltaLeft = rawDeltaLeft * directionSign;
+  telemetry.speedLoopDeltaRight = rawDeltaRight * directionSign;
+  telemetry.speedLoopCarSpeed = (telemetry.speedLoopDeltaLeft + telemetry.speedLoopDeltaRight) * 0.5f;
+  telemetry.speedLoopFilter = (telemetry.speedLoopFilter * 0.7f) + (telemetry.speedLoopCarSpeed * 0.3f);
+  telemetry.speedLoopIntegral += telemetry.speedLoopFilter;
+  telemetry.speedLoopIntegral =
+      clampFloat(telemetry.speedLoopIntegral, -BALANCE_SPEED_INTEGRAL_LIMIT, BALANCE_SPEED_INTEGRAL_LIMIT);
+  telemetry.speedLoopOutput =
+      (-BALANCE_SPEED_KP * telemetry.speedLoopFilter) - (BALANCE_SPEED_KI * telemetry.speedLoopIntegral);
+  telemetry.speedLoopSampleCount++;
 }
 
 void applyBalanceMotorOutput(BalanceTelemetry &telemetry) {

@@ -29,6 +29,21 @@ struct MotorCommandMsg {
   int rightPwm = 0;
 };
 
+struct EncoderTelemetry {
+  bool initialized = false;
+  unsigned long updatedAtMs = 0;
+  unsigned long windowMs = 0;
+  unsigned long totalLeft = 0;
+  unsigned long totalRight = 0;
+  long deltaLeft = 0;
+  long deltaRight = 0;
+  float leftRatePps = 0.0f;
+  float rightRatePps = 0.0f;
+  float combinedSpeedPulses = 0.0f;
+  float speedFilter = 0.0f;
+  uint32_t sampleCount = 0;
+};
+
 // Shared resources
 extern QueueHandle_t g_motorQueue;
 extern SemaphoreHandle_t g_i2cMutex;

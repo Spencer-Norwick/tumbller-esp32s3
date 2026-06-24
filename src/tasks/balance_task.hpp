@@ -73,6 +73,16 @@ struct BalanceTelemetry {
   float balanceOutputClamped = 0.0f;
   int balanceLeftPwm = 0;
   int balanceRightPwm = 0;
+  bool speedLoopReady = false;
+  unsigned long encoderTotalLeft = 0;
+  unsigned long encoderTotalRight = 0;
+  long speedLoopDeltaLeft = 0;
+  long speedLoopDeltaRight = 0;
+  float speedLoopCarSpeed = 0.0f;
+  float speedLoopFilter = 0.0f;
+  float speedLoopIntegral = 0.0f;
+  float speedLoopOutput = 0.0f;
+  uint32_t speedLoopSampleCount = 0;
   float loopDtMs = 0.0f;
   ImuRawSample raw;
   char lastError[48] = "not started";

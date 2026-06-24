@@ -28,6 +28,7 @@
 // Encoder pins
 #define ENCODER_LEFT_A_PIN 2
 #define ENCODER_RIGHT_A_PIN 4
+#define ENCODER_SPEED_WINDOW_MS 40
 
 // IMU / balance sensor validation
 #define IMU_I2C_ADDR 0x68
@@ -49,6 +50,10 @@
 #define BALANCE_MOTOR_SIGN 1.0f
 #define BALANCE_ARM_MAX_OUTPUT_LIMIT 45.0f
 #define BALANCE_DRIVE_COMMAND_TIMEOUT_MS 80
+#define BALANCE_SPEED_LOOP_PERIODS 8
+#define BALANCE_SPEED_KP 10.0f
+#define BALANCE_SPEED_KI 0.26f
+#define BALANCE_SPEED_INTEGRAL_LIMIT 3000.0f
 
 // WiFi / mDNS hostname
 #define WIFI_HOSTNAME "finland-tumbller-01"

@@ -13,6 +13,8 @@ class Motor
           void Encoder_init();
           static void EncoderCountRightA();
           static void EncoderCountLeftA();
+          static void SnapshotEncoderCounts(unsigned long &leftCount, unsigned long &rightCount);
+          static void ResetEncoderCounts();
           
           void (Motor::*MOVE[5])(int speed);
           void Stop(int speed);
@@ -27,8 +29,8 @@ class Motor
           void DriveSigned(int leftPwm, int rightPwm);
 
   public:
-          static unsigned long encoder_count_right_a;
-          static unsigned long encoder_count_left_a;
+          static volatile unsigned long encoder_count_right_a;
+          static volatile unsigned long encoder_count_left_a;
 
   };
 

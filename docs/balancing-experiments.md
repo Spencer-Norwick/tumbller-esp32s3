@@ -339,3 +339,31 @@ Result: Balance arm produced audible/visible motor correction when the robot was
 Takeaway: The balance output path reaches the motors. The motor driver polarity convention needed correction because `HIGH` on both direction pins maps to physical backward and `LOW` maps to physical forward.
 
 Next action: Patch the motor driver so `Forward` and positive signed balance PWM mean physical forward, rebuild/upload, and repeat a short armed balance test.
+
+## 2026-06-24: Encoder Telemetry and Speed-Loop Direction
+
+Goal: Validate the hall encoder path before tuning the balance controller further, and line up the next milestone with Elegoo's known-working speed-loop architecture.
+
+Setup: Robot held wheels-up. Balance disarmed. Encoder firmware uploaded with `/encoder/status` and `/encoder/reset`; dashboard updated with encoder totals, 40 ms deltas, pulse rates, and speed-filter readouts.
+
+Change: Initialized encoder interrupts from the motor task, added atomic encoder count snapshots, and published a 40 ms encoder speed sample matching Elegoo's filter shape: average left/right pulse delta, then `speedFilter = old * 0.7 + sample * 0.3`.
+
+Result: Stationary `/encoder/status` returned initialized telemetry with zero counts. `/encoder/reset` cleared totals. Four wheels-up diagnostic pulses produced side-specific encoder counts: left-low forward counted left only (`221` pulses), left-high backward counted left only (`202` pulses), right-low forward counted right only (`216` pulses), and right-high backward counted right only (`214` pulses). Final instantaneous deltas/rates were zero because telemetry was read after each pulse completed and stopped.
+
+Takeaway: Encoder pulse counting works on both wheels and is roughly symmetric during unloaded diagnostic pulses. The encoder signal is currently single-channel pulse count, so wheel direction is not measured directly; the speed loop must infer signed pulses from commanded wheel PWM sign, as Elegoo does in `BalanceCar.h`.
+
+Next action: Add preview telemetry for Elegoo's encoder speed loop: signed left/right pulse accumulation over a 40 ms window, `speedFilter`, `car_speed_integral`, and `speed_control_output`, still without changing motor output behavior.
+
+## 2026-06-24: Speed-Loop Preview Telemetry
+
+Goal: Port the shape of Elegoo's encoder speed loop into observable telemetry before allowing it to affect motor output.
+
+Setup: Arduino Nano ESP32 connected over USB at `/dev/cu.usbmodem11201`; robot reachable at `http://192.168.4.53`; Balance Lab dashboard running locally at `http://127.0.0.1:8787`.
+
+Change: Added compile-time speed-loop constants matching the Elegoo structure: update every eighth 5 ms balance tick, `Kp=10.0`, `Ki=0.26`, and integral clamp `+/-3000`. `/balance/status` now reports encoder totals, signed speed-loop deltas, car speed, low-pass speed filter, integral accumulator, and preview speed-loop output. The dashboard displays the preview deltas and output in the Encoders panel.
+
+Result: `platformio run` passed and the firmware uploaded successfully. `/balance/status` reported `speedLoopReady=true`, zero stationary encoder totals, zero speed-loop deltas, zero filter/integral/output, and `balanceMotorOutputArmed=false` after reset. `/encoder/status` reported initialized encoder telemetry with `windowMs=40`.
+
+Takeaway: The speed-loop math is now visible without changing motor behavior. The implementation still infers signed pulses from the proposed balance command sign because the current encoder signal is single-channel pulse count, not quadrature direction.
+
+Next action: With the robot wheels-up, run short controlled balance-drive pulses and verify signed speed-loop deltas agree with physical forward/back motion on both wheels before mixing `speedLoopOutput` into motor commands.
