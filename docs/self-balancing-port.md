@@ -21,6 +21,7 @@ Planned behavior:
 - Initialize an MPU6050-style IMU at `0x68`, matching Elegoo's default low-AD0 address.
 - Expose raw IMU values at `/imu/raw`.
 - Expose pitch estimate, gyro rate, loop timing, calibration state, and disabled motor output at `/balance/status`.
+- Stream low-rate `balance_csv` lines over USB serial for sensor validation when WiFi/HTTP observability is unreliable.
 - Recalibrate stationary gyro bias through `/balance/calibrate`.
 - Protect all I2C users behind one FreeRTOS mutex.
 

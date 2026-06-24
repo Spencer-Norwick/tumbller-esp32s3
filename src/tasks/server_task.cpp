@@ -53,7 +53,7 @@ static void serverTask(void *pvParameters) {
     client.setTimeout(CLIENT_HEADER_TIMEOUT_MS);
     unsigned long currentTime = millis();
     unsigned long previousTime = currentTime;
-#ifdef USE_SERIAL
+#if defined(USE_SERIAL) && defined(HTTP_SERIAL_DEBUG)
     Serial.println("New Client.");
 #endif
         String currentLine = ""; // collect the current header line
@@ -62,7 +62,7 @@ static void serverTask(void *pvParameters) {
       currentTime = millis();
       if (client.available()) {
         char c = client.read();
-#ifdef USE_SERIAL
+#if defined(USE_SERIAL) && defined(HTTP_SERIAL_DEBUG)
         Serial.write(c);
 #endif
         header += c;
@@ -100,7 +100,7 @@ static void serverTask(void *pvParameters) {
     }
     header = "";
     client.stop();
-#ifdef USE_SERIAL
+#if defined(USE_SERIAL) && defined(HTTP_SERIAL_DEBUG)
     Serial.println("Client disconnected.");
     Serial.println("");
 #endif

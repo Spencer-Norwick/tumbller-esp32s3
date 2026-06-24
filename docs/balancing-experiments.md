@@ -185,3 +185,17 @@ Result: The `atan2(AX, AY)` trace jumped sharply and was not symmetric around th
 Takeaway: `atan2(AX, AY)` is likely crossing an unstable region around the upright pose and should be treated as a debug signal, not the primary pitch estimate. A pitch-from-X candidate should compare AX against the combined non-X gravity magnitude instead of only AY.
 
 Next action: Add `accelTiltXDeg = atan2(ax, sqrt(ay^2 + az^2))` and use it in the dashboard trace for the next forward/back and side-to-side tests.
+
+## 2026-06-24: Tilt-Dependent WiFi Telemetry Dropout
+
+Goal: Determine whether telemetry loss during backward tilt is caused by sensor math, sensor reads, WiFi/HTTP, or physical connection issues.
+
+Setup: Balance Lab dashboard over WiFi/HTTP while manually tilting forward and backward.
+
+Change: Slowly tilted forward, then attempted to tilt backward.
+
+Result: Forward tilt produced visible X-tilt trace movement. During backward tilt the dashboard telemetry went offline; tilting forward again brought telemetry back, but the dashboard was laggy.
+
+Takeaway: A dashboard offline state means the HTTP telemetry path failed, not necessarily that IMU reads failed. The position-dependent behavior may be WiFi orientation, USB/power strain, loose wiring, or firmware HTTP overload, so we need an observability channel that bypasses WiFi.
+
+Next action: Add low-rate USB serial `balance_csv` telemetry and repeat the tilt test with a serial monitor open. If serial keeps streaming while WiFi drops, debug WiFi/HTTP/tooling. If serial stops or resets, inspect power, USB cable strain, and wiring.

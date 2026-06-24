@@ -25,6 +25,7 @@ bool readImuLocked(ImuRawSample &sample, const char *&error);
 bool runGyroCalibration(float &gyroBiasRaw, BalanceTelemetry &telemetry);
 float smoothAngleDeg(float previousDeg, float nextDeg, float alpha);
 void computeAxisCandidates(const ImuRawSample &sample, BalanceTelemetry &telemetry);
+void emitSerialTelemetry(const BalanceTelemetry &telemetry);
 }  // namespace
 
 void balance_task_start() {
@@ -110,6 +111,7 @@ void balanceTask(void *pvParameters) {
     }
 
     publishTelemetry(telemetry);
+    emitSerialTelemetry(telemetry);
     vTaskDelay(pdMS_TO_TICKS(BALANCE_SENSOR_LOOP_MS));
   }
 }
@@ -214,5 +216,51 @@ float smoothAngleDeg(float previousDeg, float nextDeg, float alpha) {
     smoothed += 360.0f;
   }
   return smoothed;
+}
+
+void emitSerialTelemetry(const BalanceTelemetry &telemetry) {
+#if defined(USE_SERIAL) && defined(BALANCE_SERIAL_TELEMETRY)
+  static bool headerPrinted = false;
+  static unsigned long lastSerialMs = 0;
+  const unsigned long nowMs = millis();
+  if (nowMs - lastSerialMs < BALANCE_SERIAL_TELEMETRY_MS) {
+    return;
+  }
+  lastSerialMs = nowMs;
+
+  if (!headerPrinted) {
+    Serial.println(
+        "balance_csv,ms,lastReadOk,calibrated,loopDtMs,failedReadCount,accelTiltXSmoothedDeg,accelTiltXDeg,"
+        "accelAngleAyAzSmoothedDeg,accelAngleAxAySmoothedDeg,gyroXRateDps,gyroYRateDps,gyroZRateDps,lastError");
+    headerPrinted = true;
+  }
+
+  Serial.print("balance_csv,");
+  Serial.print(telemetry.updatedAtMs);
+  Serial.print(",");
+  Serial.print(telemetry.lastReadOk ? 1 : 0);
+  Serial.print(",");
+  Serial.print(telemetry.calibrated ? 1 : 0);
+  Serial.print(",");
+  Serial.print(telemetry.loopDtMs, 3);
+  Serial.print(",");
+  Serial.print(telemetry.failedReadCount);
+  Serial.print(",");
+  Serial.print(telemetry.accelTiltXSmoothedDeg, 3);
+  Serial.print(",");
+  Serial.print(telemetry.accelTiltXDeg, 3);
+  Serial.print(",");
+  Serial.print(telemetry.accelAngleAyAzSmoothedDeg, 3);
+  Serial.print(",");
+  Serial.print(telemetry.accelAngleAxAySmoothedDeg, 3);
+  Serial.print(",");
+  Serial.print(telemetry.gyroXRateDps, 3);
+  Serial.print(",");
+  Serial.print(telemetry.gyroYRateDps, 3);
+  Serial.print(",");
+  Serial.print(telemetry.gyroZRateDps, 3);
+  Serial.print(",");
+  Serial.println(telemetry.lastError);
+#endif
 }
 }  // namespace
