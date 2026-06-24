@@ -101,3 +101,45 @@ Result: Calibration completed with `calibrated=true`, `gyroBiasRaw=47.718`, and 
 Takeaway: Calibration works as a smoke test, but loop timing is slower than intended and should be measured again after any task-priority or delay changes. The angle estimate is still not validated for physical orientation.
 
 Next action: Keep balance motor output disabled; next work should focus on orientation validation and loop timing before any PID output is connected.
+
+## 2026-06-23: Hands-On Axis Observation
+
+Goal: Determine whether the current Elegoo pitch convention measures the robot's forward/back balance axis on this hardware.
+
+Setup: Balance Lab dashboard open at `http://127.0.0.1:8787`, robot manually tilted by hand.
+
+Change: Observed pitch response while tilting the robot forward/back and side-to-side.
+
+Result: The current pitch estimate is close to `0 deg` when upright on wheels and close to `-180 deg` when wheels-up, but it changes much more during side-to-side wheel-lift motion than during forward/back tilt.
+
+Takeaway: The current Elegoo `atan2(ay, az)` angle appears to be measuring the side-to-side roll axis for this ESP32/IMU mounting, not the forward/back balance axis. We need explicit axis-candidate telemetry before choosing the Kalman input for motor balancing.
+
+Next action: Expose alternate accelerometer angle candidates and gyro axis rates in `/balance/status`, then repeat the hands-on tilt test to identify the forward/back axis.
+
+## 2026-06-23: Telemetry Polling Load Check
+
+Goal: Verify that repeated telemetry reads can support hands-on IMU orientation testing without disrupting the ESP32 HTTP server.
+
+Setup: Balance Lab dashboard pointed at the robot over WiFi, with `/balance/status` and `/imu/raw` requested repeatedly through the local dashboard proxy.
+
+Change: Added axis-candidate fields to `/balance/status`, then refreshed the dashboard while it was polling telemetry.
+
+Result: `/balance/status` initially returned the new axis fields successfully, but repeated polling produced intermittent proxy `502` responses and eventually direct requests to the board timed out.
+
+Takeaway: The current single-client HTTP server path needs to fail fast on stale connections and yield while waiting for request headers. The dashboard should avoid unnecessary concurrent polling while we are validating control-loop sensors.
+
+Next action: Shorten the firmware header-read timeout, add a maximum header size, yield inside the client-read loop, and keep live dashboard polling focused on `/balance/status`.
+
+## 2026-06-24: Axis Candidate Readability
+
+Goal: Make hands-on IMU orientation characterization easier to interpret.
+
+Setup: Robot manually tilted while watching the Balance Lab dashboard axis-candidate panel.
+
+Change: Reviewed the axis-candidate telemetry names and live readout behavior after a hand test showed noisy values and unclear `AxAz`/`AxAy` labels.
+
+Result: The raw candidate values were too jumpy for easy hand interpretation, and the two-axis field names were not self-explanatory without knowing that each candidate is an `atan2(axis1, axis2)` angle.
+
+Takeaway: Sensor-validation telemetry needs both machine-useful raw values and human-readable, smoothed readouts for bring-up work.
+
+Next action: Add low-pass filtered `*SmoothedDeg` fields to `/balance/status`, keep raw candidate fields, and update dashboard labels to show the `atan2(...)` convention directly.

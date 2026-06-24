@@ -11,6 +11,8 @@
 #include "server_task.hpp"
 
 static WiFiServer server(80);
+static constexpr unsigned long CLIENT_HEADER_TIMEOUT_MS = 250;
+static constexpr size_t MAX_HEADER_BYTES = 1536;
 static void serverTask(void *pvParameters);
 static void sendJson(WiFiClient &client, const char *status, const String &body);
 static const char *jsonBool(bool value);
@@ -31,7 +33,6 @@ void server_task_start() {
 
 static void serverTask(void *pvParameters) {
   (void)pvParameters;
-  const long timeoutTime = 2000; // client timeout window (ms)
   for (;;) {
     // Blink heartbeat LED once per second to show the task is alive
     {
@@ -49,6 +50,7 @@ static void serverTask(void *pvParameters) {
       continue;
     }
 
+    client.setTimeout(CLIENT_HEADER_TIMEOUT_MS);
     unsigned long currentTime = millis();
     unsigned long previousTime = currentTime;
 #ifdef USE_SERIAL
@@ -56,7 +58,7 @@ static void serverTask(void *pvParameters) {
 #endif
         String currentLine = ""; // collect the current header line
         String header;            // full HTTP header buffer
-    while (client.connected() && currentTime - previousTime <= timeoutTime) {
+    while (client.connected() && currentTime - previousTime <= CLIENT_HEADER_TIMEOUT_MS) {
       currentTime = millis();
       if (client.available()) {
         char c = client.read();
@@ -64,6 +66,12 @@ static void serverTask(void *pvParameters) {
         Serial.write(c);
 #endif
         header += c;
+        if (header.length() > MAX_HEADER_BYTES) {
+          client.println("HTTP/1.1 431 Request Header Fields Too Large");
+          client.println("Connection: close");
+          client.println();
+          break;
+        }
         if (c == '\n') {
           if (currentLine.length() == 0) {
             // End of headers: dispatch by path (info → JSON, sensor → JSON, motor → HTML)
@@ -86,6 +94,8 @@ static void serverTask(void *pvParameters) {
         } else if (c != '\r') {
           currentLine += c;
         }
+      } else {
+        vTaskDelay(pdMS_TO_TICKS(1));
       }
     }
     header = "";
@@ -205,8 +215,18 @@ static bool handleBalanceStatusRequest(WiFiClient &client, const String &header)
   jsonResponse += ",\"failedReadCount\":" + String(telemetry.failedReadCount);
   jsonResponse += ",\"loopDtMs\":" + String(telemetry.loopDtMs, 3);
   jsonResponse += ",\"accelPitchDeg\":" + String(telemetry.accelPitchDeg, 3);
+  jsonResponse += ",\"accelAngleAyAzDeg\":" + String(telemetry.accelAngleAyAzDeg, 3);
+  jsonResponse += ",\"accelAngleAxAzDeg\":" + String(telemetry.accelAngleAxAzDeg, 3);
+  jsonResponse += ",\"accelAngleAxAyDeg\":" + String(telemetry.accelAngleAxAyDeg, 3);
+  jsonResponse += ",\"axisFilterReady\":" + String(jsonBool(telemetry.axisFilterReady));
+  jsonResponse += ",\"accelAngleAyAzSmoothedDeg\":" + String(telemetry.accelAngleAyAzSmoothedDeg, 3);
+  jsonResponse += ",\"accelAngleAxAzSmoothedDeg\":" + String(telemetry.accelAngleAxAzSmoothedDeg, 3);
+  jsonResponse += ",\"accelAngleAxAySmoothedDeg\":" + String(telemetry.accelAngleAxAySmoothedDeg, 3);
   jsonResponse += ",\"pitchDeg\":" + String(telemetry.pitchDeg, 3);
   jsonResponse += ",\"gyroRateDps\":" + String(telemetry.gyroRateDps, 3);
+  jsonResponse += ",\"gyroXRateDps\":" + String(telemetry.gyroXRateDps, 3);
+  jsonResponse += ",\"gyroYRateDps\":" + String(telemetry.gyroYRateDps, 3);
+  jsonResponse += ",\"gyroZRateDps\":" + String(telemetry.gyroZRateDps, 3);
   jsonResponse += ",\"gyroBiasRaw\":" + String(telemetry.gyroBiasRaw, 3);
   jsonResponse += ",\"lastError\":\"" + String(telemetry.lastError) + "\"";
   jsonResponse += "}";

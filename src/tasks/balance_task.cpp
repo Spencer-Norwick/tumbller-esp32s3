@@ -10,6 +10,7 @@
 #include "task_common.hpp"
 
 namespace {
+constexpr float AXIS_CANDIDATE_FILTER_ALPHA = 0.10f;
 Mpu6050Imu g_imu;
 KalmanPitch g_pitchFilter;
 BalanceTelemetry g_telemetry;
@@ -22,7 +23,8 @@ void copyTelemetry(BalanceTelemetry &out);
 void setError(BalanceTelemetry &telemetry, const char *message);
 bool readImuLocked(ImuRawSample &sample, const char *&error);
 bool runGyroCalibration(float &gyroBiasRaw, BalanceTelemetry &telemetry);
-float computeElegooPitchDeg(const ImuRawSample &sample);
+float smoothAngleDeg(float previousDeg, float nextDeg, float alpha);
+void computeAxisCandidates(const ImuRawSample &sample, BalanceTelemetry &telemetry);
 }  // namespace
 
 void balance_task_start() {
@@ -93,9 +95,12 @@ void balanceTask(void *pvParameters) {
 
     if (readOk) {
       telemetry.raw = sample;
-      telemetry.accelPitchDeg = computeElegooPitchDeg(sample);
+      computeAxisCandidates(sample, telemetry);
       const float gyroRateDps = (sample.gx - telemetry.gyroBiasRaw) / 131.0f;
       telemetry.gyroRateDps = gyroRateDps;
+      telemetry.gyroXRateDps = gyroRateDps;
+      telemetry.gyroYRateDps = static_cast<float>(sample.gy) / 131.0f;
+      telemetry.gyroZRateDps = static_cast<float>(sample.gz) / 131.0f;
       g_pitchFilter.update(telemetry.accelPitchDeg, gyroRateDps, dtSeconds);
       telemetry.pitchDeg = g_pitchFilter.angleDeg();
       setError(telemetry, "ok");
@@ -150,7 +155,7 @@ bool runGyroCalibration(float &gyroBiasRaw, BalanceTelemetry &telemetry) {
     }
     gyroXSum += sample.gx;
     telemetry.raw = sample;
-    telemetry.accelPitchDeg = computeElegooPitchDeg(sample);
+    computeAxisCandidates(sample, telemetry);
     samplesRead++;
     vTaskDelay(pdMS_TO_TICKS(2));
   }
@@ -165,7 +170,45 @@ bool runGyroCalibration(float &gyroBiasRaw, BalanceTelemetry &telemetry) {
   return true;
 }
 
-float computeElegooPitchDeg(const ImuRawSample &sample) {
-  return atan2f(static_cast<float>(sample.ay), static_cast<float>(sample.az)) * 57.2957795f;
+void computeAxisCandidates(const ImuRawSample &sample, BalanceTelemetry &telemetry) {
+  const float ax = static_cast<float>(sample.ax);
+  const float ay = static_cast<float>(sample.ay);
+  const float az = static_cast<float>(sample.az);
+  telemetry.accelAngleAyAzDeg = atan2f(ay, az) * 57.2957795f;
+  telemetry.accelAngleAxAzDeg = atan2f(ax, az) * 57.2957795f;
+  telemetry.accelAngleAxAyDeg = atan2f(ax, ay) * 57.2957795f;
+  if (!telemetry.axisFilterReady) {
+    telemetry.accelAngleAyAzSmoothedDeg = telemetry.accelAngleAyAzDeg;
+    telemetry.accelAngleAxAzSmoothedDeg = telemetry.accelAngleAxAzDeg;
+    telemetry.accelAngleAxAySmoothedDeg = telemetry.accelAngleAxAyDeg;
+    telemetry.axisFilterReady = true;
+  } else {
+    telemetry.accelAngleAyAzSmoothedDeg =
+        smoothAngleDeg(telemetry.accelAngleAyAzSmoothedDeg, telemetry.accelAngleAyAzDeg, AXIS_CANDIDATE_FILTER_ALPHA);
+    telemetry.accelAngleAxAzSmoothedDeg =
+        smoothAngleDeg(telemetry.accelAngleAxAzSmoothedDeg, telemetry.accelAngleAxAzDeg, AXIS_CANDIDATE_FILTER_ALPHA);
+    telemetry.accelAngleAxAySmoothedDeg =
+        smoothAngleDeg(telemetry.accelAngleAxAySmoothedDeg, telemetry.accelAngleAxAyDeg, AXIS_CANDIDATE_FILTER_ALPHA);
+  }
+  telemetry.accelPitchDeg = telemetry.accelAngleAyAzDeg;
+}
+
+float smoothAngleDeg(float previousDeg, float nextDeg, float alpha) {
+  float delta = nextDeg - previousDeg;
+  while (delta > 180.0f) {
+    delta -= 360.0f;
+  }
+  while (delta < -180.0f) {
+    delta += 360.0f;
+  }
+
+  float smoothed = previousDeg + alpha * delta;
+  while (smoothed > 180.0f) {
+    smoothed -= 360.0f;
+  }
+  while (smoothed <= -180.0f) {
+    smoothed += 360.0f;
+  }
+  return smoothed;
 }
 }  // namespace

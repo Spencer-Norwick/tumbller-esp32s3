@@ -38,6 +38,16 @@ Safety constraints:
 - Fall range is approximately `-22` to `22` degrees.
 - The speed PI controller is intentionally slower than the balance loop; it updates every eighth 5 ms tick.
 
+## IMU Axis Candidate Notes
+
+The accelerometer reports gravity projected onto the sensor's X/Y/Z axes. A tilt angle needs two projected components, so the validation firmware exposes candidates named by the two accelerometer axes passed to `atan2`:
+
+- `accelAngleAyAzDeg`: `atan2(ay, az)`, matching the Elegoo AVR pitch convention.
+- `accelAngleAxAzDeg`: `atan2(ax, az)`, an alternate candidate for a different IMU mounting orientation.
+- `accelAngleAxAyDeg`: `atan2(ax, ay)`, useful when gravity is mostly shared between X and Y.
+
+The `*SmoothedDeg` fields are low-pass filtered copies for hand validation. The non-smoothed fields remain available for debugging sensor noise and filter lag.
+
 ## Milestone Checklist
 
 - [x] Preserve motor diagnostic bring-up work on a dedicated branch.
