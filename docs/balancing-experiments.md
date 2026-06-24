@@ -297,3 +297,17 @@ Result: Build and upload succeeded. Before calibration, `/balance/status` report
 Takeaway: The preview scaffolding works and remains non-actuating. The Elegoo reference gains are high enough to saturate the preview output during large hand-rock tests, so the next tuning step should use smaller preview gains or constrained near-upright tests before any motor-apply milestone.
 
 Next action: Add runtime tuning or a reduced-gain preview profile, then validate proposed output polarity and magnitude with small near-upright pitch motions before enabling any balance motor writes.
+
+## 2026-06-24: Runtime Preview Gain Tuning
+
+Goal: Avoid rebuild/upload cycles for preview-controller tuning while keeping balance motor output disabled.
+
+Setup: Preview-only controller after large hand-rock tests saturated the Elegoo reference output.
+
+Change: Changed compile-time preview defaults to `Kp=5.0`, `Ki=0.0`, `Kd=0.15`, and output limit `120 pwm`. Added RAM-only `/balance/config` tuning for `kp`, `ki`, `kd`, `setpoint`, `limit`, and `maxAngle`. Added dashboard controls to read and apply preview gains without firmware rebuilds.
+
+Result: Build and upload succeeded. `/balance/config` default readback returned `Kp=5.0`, `Ki=0.0`, `Kd=0.15`, output limit `120 pwm`, and `maxAbsAngle=22 deg`. A runtime update to `Kp=6.5`, `Ki=0.0`, `Kd=0.2`, output limit `90 pwm`, setpoint `0 deg`, and `maxAbsAngle=20 deg` returned `updated=true`. After calibration, `/balance/status` reflected the updated gains, `balanceControlSafetyOk=true`, `balanceMotorOutputEnabled=false`, `balanceIntegralError=0.000`, and proposed output around `5 pwm` near `0.8 deg` pitch.
+
+Takeaway: The next tuning loop should happen through the dashboard, not repeated firmware edits. Settings reset on board restart, which keeps experimental gain changes nonpersistent.
+
+Next action: Use the dashboard runtime controls for small near-upright hand tilts and choose preview gains that keep proposed output within range without saturation.

@@ -68,7 +68,10 @@ Selected validation path:
 
 The first controller milestone computes a proposed balance output without applying it to the motors.
 
-- Gains start from the Elegoo vertical-ring reference: `Kp=55.0`, `Ki=0.0`, `Kd=0.75`.
+- Elegoo's vertical-ring reference gains are `Kp=55.0`, `Ki=0.0`, `Kd=0.75`.
+- Safer preview defaults are `Kp=5.0`, `Ki=0.0`, `Kd=0.15`, with output limited to `+/-120 pwm`.
+- `/balance/config` exposes RAM-only runtime tuning for `kp`, `ki`, `kd`, `setpoint`, `limit`, and `maxAngle`.
+- Runtime tuning is intentionally volatile; a board reset returns to compile-time defaults.
 - The preview controller computes `P`, `I`, `D`, raw output, clamped output, and proposed left/right PWM.
 - With `Ki=0.0`, the integral accumulator is held at zero to avoid hidden windup before integral tuning is deliberately enabled.
 - Safety gates require a healthy sensor read, completed gyro calibration, and pitch within `+/-22 deg`.

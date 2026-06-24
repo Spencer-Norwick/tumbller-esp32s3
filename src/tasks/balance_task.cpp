@@ -14,12 +14,22 @@ constexpr float AXIS_CANDIDATE_FILTER_ALPHA = 0.10f;
 Mpu6050Imu g_imu;
 KalmanPitch g_pitchFilter;
 BalanceTelemetry g_telemetry;
+BalanceControlConfig g_balanceConfig = {
+    BALANCE_ANGLE_SETPOINT_DEG,
+    BALANCE_PID_KP,
+    BALANCE_PID_KI,
+    BALANCE_PID_KD,
+    BALANCE_PID_OUTPUT_LIMIT,
+    BALANCE_CONTROL_MAX_ABS_ANGLE_DEG,
+};
 portMUX_TYPE g_telemetryMux = portMUX_INITIALIZER_UNLOCKED;
+portMUX_TYPE g_configMux = portMUX_INITIALIZER_UNLOCKED;
 volatile bool g_calibrationRequested = false;
 
 void balanceTask(void *pvParameters);
 void publishTelemetry(const BalanceTelemetry &telemetry);
 void copyTelemetry(BalanceTelemetry &out);
+void copyConfig(BalanceControlConfig &out);
 void setError(BalanceTelemetry &telemetry, const char *message);
 void setBalanceSafetyReason(BalanceTelemetry &telemetry, const char *message);
 bool readImuLocked(ImuRawSample &sample, const char *&error);
@@ -27,6 +37,7 @@ bool runPitchGyroCalibration(float &gyroBiasRaw, BalanceTelemetry &telemetry);
 float smoothAngleDeg(float previousDeg, float nextDeg, float alpha);
 void computeAxisCandidates(const ImuRawSample &sample, BalanceTelemetry &telemetry);
 void computeBalanceControl(BalanceTelemetry &telemetry, float dtSeconds);
+void applyConfigToTelemetry(BalanceTelemetry &telemetry, const BalanceControlConfig &config);
 float clampFloat(float value, float minValue, float maxValue);
 void emitSerialTelemetry(const BalanceTelemetry &telemetry);
 }  // namespace
@@ -48,18 +59,25 @@ void balance_get_raw(BalanceTelemetry &out) {
   copyTelemetry(out);
 }
 
+void balance_get_config(BalanceControlConfig &out) {
+  copyConfig(out);
+}
+
+void balance_set_config(const BalanceControlConfig &config) {
+  taskENTER_CRITICAL(&g_configMux);
+  g_balanceConfig = config;
+  taskEXIT_CRITICAL(&g_configMux);
+}
+
 namespace {
 void balanceTask(void *pvParameters) {
   (void)pvParameters;
 
   BalanceTelemetry telemetry;
   telemetry.imuAddress = IMU_I2C_ADDR;
-  telemetry.balanceControllerEnabled = BALANCE_CONTROLLER_COMPUTE_ENABLED != 0;
-  telemetry.balanceMotorOutputEnabled = BALANCE_MOTOR_OUTPUT_ENABLED != 0;
-  telemetry.balanceSetpointDeg = BALANCE_ANGLE_SETPOINT_DEG;
-  telemetry.balanceKp = BALANCE_PID_KP;
-  telemetry.balanceKi = BALANCE_PID_KI;
-  telemetry.balanceKd = BALANCE_PID_KD;
+  BalanceControlConfig config;
+  copyConfig(config);
+  applyConfigToTelemetry(telemetry, config);
   setBalanceSafetyReason(telemetry, "not calibrated");
 
   if (i2c_lock(pdMS_TO_TICKS(500))) {
@@ -139,6 +157,12 @@ void copyTelemetry(BalanceTelemetry &out) {
   taskENTER_CRITICAL(&g_telemetryMux);
   out = g_telemetry;
   taskEXIT_CRITICAL(&g_telemetryMux);
+}
+
+void copyConfig(BalanceControlConfig &out) {
+  taskENTER_CRITICAL(&g_configMux);
+  out = g_balanceConfig;
+  taskEXIT_CRITICAL(&g_configMux);
 }
 
 void setError(BalanceTelemetry &telemetry, const char *message) {
@@ -237,12 +261,9 @@ float smoothAngleDeg(float previousDeg, float nextDeg, float alpha) {
 }
 
 void computeBalanceControl(BalanceTelemetry &telemetry, float dtSeconds) {
-  telemetry.balanceControllerEnabled = BALANCE_CONTROLLER_COMPUTE_ENABLED != 0;
-  telemetry.balanceMotorOutputEnabled = BALANCE_MOTOR_OUTPUT_ENABLED != 0;
-  telemetry.balanceSetpointDeg = BALANCE_ANGLE_SETPOINT_DEG;
-  telemetry.balanceKp = BALANCE_PID_KP;
-  telemetry.balanceKi = BALANCE_PID_KI;
-  telemetry.balanceKd = BALANCE_PID_KD;
+  BalanceControlConfig config;
+  copyConfig(config);
+  applyConfigToTelemetry(telemetry, config);
   telemetry.balanceAngleErrorDeg = telemetry.pitchDeg - telemetry.balanceSetpointDeg;
 
   telemetry.balanceControlSafetyOk = false;
@@ -255,7 +276,7 @@ void computeBalanceControl(BalanceTelemetry &telemetry, float dtSeconds) {
   } else if (!telemetry.calibrated) {
     telemetry.balanceIntegralError = 0.0f;
     setBalanceSafetyReason(telemetry, "not calibrated");
-  } else if (fabsf(telemetry.pitchDeg) > BALANCE_CONTROL_MAX_ABS_ANGLE_DEG) {
+  } else if (fabsf(telemetry.pitchDeg) > telemetry.balanceMaxAbsAngleDeg) {
     telemetry.balanceIntegralError = 0.0f;
     setBalanceSafetyReason(telemetry, "angle outside safe window");
   } else {
@@ -273,7 +294,7 @@ void computeBalanceControl(BalanceTelemetry &telemetry, float dtSeconds) {
   telemetry.balanceDTerm = telemetry.balanceKd * telemetry.gyroRateDps;
   telemetry.balanceOutputRaw = telemetry.balancePTerm + telemetry.balanceITerm + telemetry.balanceDTerm;
   telemetry.balanceOutputClamped =
-      clampFloat(telemetry.balanceOutputRaw, -BALANCE_PID_OUTPUT_LIMIT, BALANCE_PID_OUTPUT_LIMIT);
+      clampFloat(telemetry.balanceOutputRaw, -telemetry.balanceOutputLimit, telemetry.balanceOutputLimit);
 
   if (!telemetry.balanceControlSafetyOk) {
     telemetry.balanceOutputClamped = 0.0f;
@@ -281,6 +302,17 @@ void computeBalanceControl(BalanceTelemetry &telemetry, float dtSeconds) {
 
   telemetry.balanceLeftPwm = static_cast<int>(telemetry.balanceOutputClamped);
   telemetry.balanceRightPwm = static_cast<int>(telemetry.balanceOutputClamped);
+}
+
+void applyConfigToTelemetry(BalanceTelemetry &telemetry, const BalanceControlConfig &config) {
+  telemetry.balanceControllerEnabled = BALANCE_CONTROLLER_COMPUTE_ENABLED != 0;
+  telemetry.balanceMotorOutputEnabled = BALANCE_MOTOR_OUTPUT_ENABLED != 0;
+  telemetry.balanceSetpointDeg = config.setpointDeg;
+  telemetry.balanceKp = config.kp;
+  telemetry.balanceKi = config.ki;
+  telemetry.balanceKd = config.kd;
+  telemetry.balanceOutputLimit = config.outputLimit;
+  telemetry.balanceMaxAbsAngleDeg = config.maxAbsAngleDeg;
 }
 
 float clampFloat(float value, float minValue, float maxValue) {

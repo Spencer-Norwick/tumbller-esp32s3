@@ -4,6 +4,24 @@
 
 #include "../drivers/Imu.hpp"
 
+struct BalanceControlConfig {
+  BalanceControlConfig() = default;
+  BalanceControlConfig(float setpoint, float kpValue, float kiValue, float kdValue, float limit, float maxAngle)
+      : setpointDeg(setpoint),
+        kp(kpValue),
+        ki(kiValue),
+        kd(kdValue),
+        outputLimit(limit),
+        maxAbsAngleDeg(maxAngle) {}
+
+  float setpointDeg = 0.0f;
+  float kp = 0.0f;
+  float ki = 0.0f;
+  float kd = 0.0f;
+  float outputLimit = 0.0f;
+  float maxAbsAngleDeg = 0.0f;
+};
+
 struct BalanceTelemetry {
   bool imuReady = false;
   bool lastReadOk = false;
@@ -38,6 +56,8 @@ struct BalanceTelemetry {
   float balanceKp = 0.0f;
   float balanceKi = 0.0f;
   float balanceKd = 0.0f;
+  float balanceOutputLimit = 0.0f;
+  float balanceMaxAbsAngleDeg = 0.0f;
   float balanceAngleErrorDeg = 0.0f;
   float balanceIntegralError = 0.0f;
   float balancePTerm = 0.0f;
@@ -57,3 +77,5 @@ void balance_task_start();
 bool balance_request_calibration();
 void balance_get_status(BalanceTelemetry &out);
 void balance_get_raw(BalanceTelemetry &out);
+void balance_get_config(BalanceControlConfig &out);
+void balance_set_config(const BalanceControlConfig &config);
