@@ -255,3 +255,17 @@ Result: Code and documentation updated locally. Build/upload validation is still
 Takeaway: The selected validation path now matches the observed ESP32S3 Tumbller IMU mounting, but it must still be built, uploaded, calibrated, and hand-validated before any motor-control milestone.
 
 Next action: Run `platformio run`, upload to the Nano ESP32, call `/balance/calibrate` while the robot is still, and validate that `pitchDeg` now follows forward/back rocking with `balanceMotorOutputEnabled=false`.
+
+## 2026-06-24: Mounted Pitch Path Build, Upload, and Stationary Calibration
+
+Goal: Build and upload the `accelTiltXDeg + gyroYRateDps` validation path, then verify stationary calibration.
+
+Setup: Arduino Nano ESP32 connected over USB at `/dev/cu.usbmodem11201`; Balance Lab dashboard pointed at `http://192.168.4.53`.
+
+Change: Built with PlatformIO, uploaded the firmware, restarted the local dashboard, and triggered `/balance/calibrate` while the robot was held still.
+
+Result: Build and upload succeeded. `/balance/status` reported `accelPitchSource="accelTiltXDeg"`, `gyroRateSource="gyroYRateDps"`, `calibrated=true`, `balanceMotorOutputEnabled=false`, `failedReadCount=0`, and `lastError="ok"`. Stationary gyro-Y bias calibrated to `227.746` raw counts. After calibration, `gyroRateDps` hovered near zero and `pitchDeg` stayed near `-2.35 deg` during the sampled stationary window.
+
+Takeaway: The selected mounted pitch path is now deployed and stationary gyro-Y calibration behaves correctly. No motor output is enabled.
+
+Next action: Repeat the trace test with deliberate forward/back rocking and confirm `pitchDeg` follows X tilt dynamically while side-to-side roll is rejected.
