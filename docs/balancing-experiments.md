@@ -397,3 +397,18 @@ Result: Build and upload succeeded. With speed mix enabled at `0.10`, the robot 
 Takeaway: Low-scale speed-loop correction can now affect real motor PWM under the existing safety gates. At `speedScale=0.10`, the speed integral can still push the mixed output to the clamp during aggressive tilts, so the next tuning step should focus on smaller tilts, lower speed scale, or integral reset/anti-windup behavior before wheels-down balancing attempts.
 
 Next action: Add speed-loop integral reset behavior when disarmed or direction changes, then repeat the low-scale wheels-up mix test with `speedScale=0.05` to reduce clamp hits.
+
+
+## 2026-06-30: Speed-Loop Reset and Anti-Windup Test
+
+Goal: Tighten the speed-loop integration behavior before moving toward wheels-down balancing, so stale speed integral cannot carry across disarm, safety trips, encoder resets, near-zero commands, or direction reversals.
+
+Setup: Anti-windup firmware uploaded over `/dev/cu.usbmodem11201`. Robot held wheels-up near upright and reachable at `http://192.168.4.53`. Encoders reset, gyro calibrated, runtime config set to `/balance/config?limit=45&speedMix=1&speedScale=0.05`, then balance output armed.
+
+Change: Added speed-loop dynamic-state reset telemetry and logic. `/balance/status` now reports `speedLoopResetCount` and `speedLoopResetReason`. The speed loop resets while disarmed, while unsafe, after encoder baseline changes, around zero command, and on inferred direction changes. The speed-loop integral is only committed when the proposed speed correction would not drive the mixed output beyond the active PWM limit.
+
+Result: Build and upload succeeded. After reset and before arming, `/balance/status` reported `speedLoopResetReason="disarmed"`, `speedLoopIntegral=0.000`, and `speedLoopOutput=0.000`. During the wheels-up run, direction reversals produced `speedLoopResetReason="direction change"` and reset the integral close to zero before accumulating in the new direction. Example reverse samples showed `speedLoopIntegral=-8.089` with mixed output clamped at `-45`, rather than preserving the large stale integral seen in the previous `speedScale=0.10` run. Later positive-direction samples reset again, for example `speedLoopIntegral=1.215`, `speedLoopOutput=-7.966`, and `balanceMixedOutputClamped=25.043`. The robot remained inside the safety window during the sampled run. Explicit `/balance/disarm` was sent and volatile `speedMix` was disabled afterward.
+
+Takeaway: The speed loop now behaves more like a controlled inner state machine instead of an always-accumulating preview. This is closer to controls best practice for the current hardware constraints: reset hidden state at mode transitions, prevent integral windup against output clamps, and keep reset reasons observable during physical tests.
+
+Next action: Add a tighter balance-test profile for wheels-up/wheels-down transition work: lower default test scale, a shorter arm timeout or timed arm endpoint, and telemetry that reports clamp duty or saturation count during a run.

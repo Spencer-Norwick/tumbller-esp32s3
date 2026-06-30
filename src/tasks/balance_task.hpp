@@ -94,10 +94,12 @@ struct BalanceTelemetry {
   float speedLoopIntegral = 0.0f;
   float speedLoopOutput = 0.0f;
   uint32_t speedLoopSampleCount = 0;
+  uint32_t speedLoopResetCount = 0;
   float loopDtMs = 0.0f;
   ImuRawSample raw;
   char lastError[48] = "not started";
   char balanceSafetyReason[48] = "not evaluated";
+  char speedLoopResetReason[40] = "not reset";
 };
 
 void balance_task_start();

@@ -88,6 +88,7 @@ The first controller milestone computes a proposed balance output without applyi
 - `/balance/status` now exposes an Elegoo-style speed-loop preview: signed encoder deltas, `speedLoopCarSpeed`, `speedLoopFilter`, `speedLoopIntegral`, and `speedLoopOutput`.
 - `/balance/status` also exposes `speedLoopSignedCommand` and `speedLoopDirectionSign` so wheels-up tests can verify that signed encoder deltas match the active balance PWM direction. A zero balance command reports direction `0` because direction cannot be inferred from single-channel encoders without a commanded wheel sign.
 - Speed-loop preview is observability only unless explicitly enabled at runtime with `/balance/config?speedMix=1&speedScale=...`. When enabled, motor PWM uses `balanceOutputClamped - speedLoopOutput * speedLoopMixScale`, clamped to the active balance output limit, while all existing arm and angle safety gates remain active.
+- Speed-loop dynamic state resets while disarmed, while unsafe, when encoder totals reset, near zero command, or when the inferred command direction changes. Runtime telemetry reports `speedLoopResetCount` and `speedLoopResetReason` so stale integral state is visible during test runs.
 
 ## Milestone Checklist
 

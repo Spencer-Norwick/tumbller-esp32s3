@@ -91,7 +91,7 @@ curl http://192.168.4.53/motor/stop
 
 1. Complete the speed sign check first.
 2. Keep the robot wheels-up and near upright, then set `/balance/config?limit=45&speedMix=1&speedScale=0.10`.
-3. Arm balance output and use small tilts only; watch `balanceMixedOutputClamped`, `speedLoopOutput`, and `speedLoopMixScale`.
+3. Arm balance output and use small tilts only; watch `balanceMixedOutputClamped`, `speedLoopOutput`, `speedLoopMixScale`, and `speedLoopResetReason`.
 4. Disarm immediately if pitch approaches the safe angle window or the mixed output saturates repeatedly.
 
 ## Editing Firmware

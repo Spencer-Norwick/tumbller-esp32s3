@@ -34,6 +34,8 @@ bool g_balanceMotorArmed = false;
 unsigned long g_speedLoopLastEncoderLeft = 0;
 unsigned long g_speedLoopLastEncoderRight = 0;
 uint8_t g_speedLoopPeriodCount = 0;
+int g_speedLoopLastDirectionSign = 0;
+uint32_t g_speedLoopResetCount = 0;
 
 void balanceTask(void *pvParameters);
 void publishTelemetry(const BalanceTelemetry &telemetry);
@@ -44,6 +46,8 @@ void setArmState(bool armed);
 void setError(BalanceTelemetry &telemetry, const char *message);
 void setBalanceSafetyReason(BalanceTelemetry &telemetry, const char *message);
 void copyReason(char *reason, size_t reasonSize, const char *message);
+void resetSpeedLoopState(BalanceTelemetry &telemetry, const char *reason, unsigned long encoderLeft,
+                         unsigned long encoderRight);
 bool readImuLocked(ImuRawSample &sample, const char *&error);
 bool runPitchGyroCalibration(float &gyroBiasRaw, BalanceTelemetry &telemetry);
 float smoothAngleDeg(float previousDeg, float nextDeg, float alpha);
@@ -164,6 +168,8 @@ void balanceTask(void *pvParameters) {
       telemetry.speedLoopOutput = 0.0f;
       telemetry.speedLoopSignedCommand = 0.0f;
       telemetry.speedLoopDirectionSign = 0;
+      telemetry.speedLoopResetCount = ++g_speedLoopResetCount;
+      copyReason(telemetry.speedLoopResetReason, sizeof(telemetry.speedLoopResetReason), "calibrated");
       telemetry.speedLoopSampleCount = 0;
       telemetry.speedLoopReady = false;
       setArmState(false);
@@ -263,6 +269,33 @@ void copyReason(char *reason, size_t reasonSize, const char *message) {
   }
   std::strncpy(reason, message, reasonSize - 1);
   reason[reasonSize - 1] = '\0';
+}
+
+void resetSpeedLoopState(BalanceTelemetry &telemetry, const char *reason, unsigned long encoderLeft,
+                         unsigned long encoderRight) {
+  const bool stateChanged = telemetry.speedLoopDeltaLeft != 0 || telemetry.speedLoopDeltaRight != 0 ||
+                            telemetry.speedLoopFilter != 0.0f || telemetry.speedLoopIntegral != 0.0f ||
+                            telemetry.speedLoopOutput != 0.0f ||
+                            std::strncmp(telemetry.speedLoopResetReason, reason,
+                                         sizeof(telemetry.speedLoopResetReason)) != 0;
+
+  g_speedLoopLastEncoderLeft = encoderLeft;
+  g_speedLoopLastEncoderRight = encoderRight;
+  g_speedLoopLastDirectionSign = telemetry.speedLoopDirectionSign;
+  g_speedLoopPeriodCount = 0;
+  telemetry.speedLoopReady = true;
+  telemetry.speedLoopDeltaLeft = 0;
+  telemetry.speedLoopDeltaRight = 0;
+  telemetry.speedLoopSignedCommand = 0.0f;
+  telemetry.speedLoopDirectionSign = 0;
+  telemetry.speedLoopCarSpeed = 0.0f;
+  telemetry.speedLoopFilter = 0.0f;
+  telemetry.speedLoopIntegral = 0.0f;
+  telemetry.speedLoopOutput = 0.0f;
+  if (stateChanged) {
+    telemetry.speedLoopResetCount = ++g_speedLoopResetCount;
+    copyReason(telemetry.speedLoopResetReason, sizeof(telemetry.speedLoopResetReason), reason);
+  }
 }
 
 bool readImuLocked(ImuRawSample &sample, const char *&error) {
@@ -404,12 +437,18 @@ void computeSpeedLoopPreview(BalanceTelemetry &telemetry) {
 
   if (!encoder.initialized) {
     telemetry.speedLoopReady = false;
-    telemetry.speedLoopDeltaLeft = 0;
-    telemetry.speedLoopDeltaRight = 0;
-    telemetry.speedLoopSignedCommand = 0.0f;
-    telemetry.speedLoopDirectionSign = 0;
-    telemetry.speedLoopCarSpeed = 0.0f;
-    telemetry.speedLoopOutput = 0.0f;
+    resetSpeedLoopState(telemetry, "encoder not initialized", encoder.totalLeft, encoder.totalRight);
+    telemetry.speedLoopReady = false;
+    return;
+  }
+
+  if (!telemetry.balanceMotorOutputArmed) {
+    resetSpeedLoopState(telemetry, "disarmed", encoder.totalLeft, encoder.totalRight);
+    return;
+  }
+
+  if (!telemetry.balanceControlSafetyOk) {
+    resetSpeedLoopState(telemetry, "safety gate", encoder.totalLeft, encoder.totalRight);
     return;
   }
 
@@ -420,28 +459,26 @@ void computeSpeedLoopPreview(BalanceTelemetry &telemetry) {
   telemetry.speedLoopSignedCommand = clampFloat(commandForDirection, -telemetry.balanceOutputLimit,
                                                 telemetry.balanceOutputLimit) *
                                      telemetry.balanceMotorSign;
-  if (telemetry.speedLoopSignedCommand > 0.0f) {
+  if (telemetry.speedLoopSignedCommand > BALANCE_SPEED_DIRECTION_DEADBAND_PWM) {
     telemetry.speedLoopDirectionSign = 1;
-  } else if (telemetry.speedLoopSignedCommand < 0.0f) {
+  } else if (telemetry.speedLoopSignedCommand < -BALANCE_SPEED_DIRECTION_DEADBAND_PWM) {
     telemetry.speedLoopDirectionSign = -1;
   } else {
-    telemetry.speedLoopDirectionSign = 0;
+    resetSpeedLoopState(telemetry, "zero command", encoder.totalLeft, encoder.totalRight);
+    return;
   }
 
   if (!telemetry.speedLoopReady || encoder.totalLeft < g_speedLoopLastEncoderLeft ||
       encoder.totalRight < g_speedLoopLastEncoderRight) {
-    g_speedLoopLastEncoderLeft = encoder.totalLeft;
-    g_speedLoopLastEncoderRight = encoder.totalRight;
-    g_speedLoopPeriodCount = 0;
-    telemetry.speedLoopReady = true;
-    telemetry.speedLoopDeltaLeft = 0;
-    telemetry.speedLoopDeltaRight = 0;
-    telemetry.speedLoopCarSpeed = 0.0f;
-    telemetry.speedLoopFilter = 0.0f;
-    telemetry.speedLoopIntegral = 0.0f;
-    telemetry.speedLoopOutput = 0.0f;
+    resetSpeedLoopState(telemetry, "encoder baseline", encoder.totalLeft, encoder.totalRight);
     return;
   }
+
+  if (g_speedLoopLastDirectionSign != 0 && telemetry.speedLoopDirectionSign != g_speedLoopLastDirectionSign) {
+    resetSpeedLoopState(telemetry, "direction change", encoder.totalLeft, encoder.totalRight);
+    return;
+  }
+  g_speedLoopLastDirectionSign = telemetry.speedLoopDirectionSign;
 
   g_speedLoopPeriodCount++;
   if (g_speedLoopPeriodCount < BALANCE_SPEED_LOOP_PERIODS) {
@@ -458,11 +495,21 @@ void computeSpeedLoopPreview(BalanceTelemetry &telemetry) {
   telemetry.speedLoopDeltaRight = rawDeltaRight * telemetry.speedLoopDirectionSign;
   telemetry.speedLoopCarSpeed = (telemetry.speedLoopDeltaLeft + telemetry.speedLoopDeltaRight) * 0.5f;
   telemetry.speedLoopFilter = (telemetry.speedLoopFilter * 0.7f) + (telemetry.speedLoopCarSpeed * 0.3f);
-  telemetry.speedLoopIntegral += telemetry.speedLoopFilter;
-  telemetry.speedLoopIntegral =
-      clampFloat(telemetry.speedLoopIntegral, -BALANCE_SPEED_INTEGRAL_LIMIT, BALANCE_SPEED_INTEGRAL_LIMIT);
-  telemetry.speedLoopOutput =
-      (-BALANCE_SPEED_KP * telemetry.speedLoopFilter) - (BALANCE_SPEED_KI * telemetry.speedLoopIntegral);
+  const float proposedIntegral = clampFloat(telemetry.speedLoopIntegral + telemetry.speedLoopFilter,
+                                            -BALANCE_SPEED_INTEGRAL_LIMIT, BALANCE_SPEED_INTEGRAL_LIMIT);
+  const float proposedOutput = (-BALANCE_SPEED_KP * telemetry.speedLoopFilter) -
+                               (BALANCE_SPEED_KI * proposedIntegral);
+  const float proposedMixedOutput = telemetry.balanceOutputClamped -
+                                    (proposedOutput * telemetry.speedLoopMixScale);
+  const bool mixWouldSaturate = telemetry.speedLoopMixEnabled &&
+                                (proposedMixedOutput > telemetry.balanceOutputLimit ||
+                                 proposedMixedOutput < -telemetry.balanceOutputLimit);
+
+  if (!mixWouldSaturate) {
+    telemetry.speedLoopIntegral = proposedIntegral;
+  }
+  telemetry.speedLoopOutput = (-BALANCE_SPEED_KP * telemetry.speedLoopFilter) -
+                              (BALANCE_SPEED_KI * telemetry.speedLoopIntegral);
   telemetry.speedLoopSampleCount++;
 }
 
