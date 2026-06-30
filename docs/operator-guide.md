@@ -87,6 +87,13 @@ curl http://192.168.4.53/motor/stop
 4. Watch `/balance/status`: `speedLoopDirectionSign` should follow `speedLoopSignedCommand`, and `speedLoopDeltaLeft` / `speedLoopDeltaRight` should flip sign when the balance command flips sign.
 5. Disarm immediately after the sign check.
 
+## Wheels-Up Speed Mix Check
+
+1. Complete the speed sign check first.
+2. Keep the robot wheels-up and near upright, then set `/balance/config?limit=45&speedMix=1&speedScale=0.10`.
+3. Arm balance output and use small tilts only; watch `balanceMixedOutputClamped`, `speedLoopOutput`, and `speedLoopMixScale`.
+4. Disarm immediately if pitch approaches the safe angle window or the mixed output saturates repeatedly.
+
 ## Editing Firmware
 
 For a new telemetry variable:

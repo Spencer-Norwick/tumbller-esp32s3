@@ -87,7 +87,7 @@ The first controller milestone computes a proposed balance output without applyi
 - `/encoder/reset` clears pulse totals and the speed-filter baseline for validation runs.
 - `/balance/status` now exposes an Elegoo-style speed-loop preview: signed encoder deltas, `speedLoopCarSpeed`, `speedLoopFilter`, `speedLoopIntegral`, and `speedLoopOutput`.
 - `/balance/status` also exposes `speedLoopSignedCommand` and `speedLoopDirectionSign` so wheels-up tests can verify that signed encoder deltas match the active balance PWM direction. A zero balance command reports direction `0` because direction cannot be inferred from single-channel encoders without a commanded wheel sign.
-- Speed-loop preview is observability only. It does not modify `balanceOutputClamped`, left/right PWM, or motor commands.
+- Speed-loop preview is observability only unless explicitly enabled at runtime with `/balance/config?speedMix=1&speedScale=...`. When enabled, motor PWM uses `balanceOutputClamped - speedLoopOutput * speedLoopMixScale`, clamped to the active balance output limit, while all existing arm and angle safety gates remain active.
 
 ## Milestone Checklist
 

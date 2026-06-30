@@ -23,6 +23,8 @@ BalanceControlConfig g_balanceConfig = {
     BALANCE_PID_OUTPUT_LIMIT,
     BALANCE_CONTROL_MAX_ABS_ANGLE_DEG,
     BALANCE_MOTOR_SIGN,
+    BALANCE_SPEED_MIX_ENABLED != 0,
+    BALANCE_SPEED_MIX_SCALE,
 };
 portMUX_TYPE g_telemetryMux = portMUX_INITIALIZER_UNLOCKED;
 portMUX_TYPE g_configMux = portMUX_INITIALIZER_UNLOCKED;
@@ -48,6 +50,7 @@ float smoothAngleDeg(float previousDeg, float nextDeg, float alpha);
 void computeAxisCandidates(const ImuRawSample &sample, BalanceTelemetry &telemetry);
 void computeBalanceControl(BalanceTelemetry &telemetry, float dtSeconds);
 void computeSpeedLoopPreview(BalanceTelemetry &telemetry);
+void computeSpeedMixedOutput(BalanceTelemetry &telemetry);
 void applyBalanceMotorOutput(BalanceTelemetry &telemetry);
 void applyConfigToTelemetry(BalanceTelemetry &telemetry, const BalanceControlConfig &config);
 float clampFloat(float value, float minValue, float maxValue);
@@ -196,11 +199,13 @@ void balanceTask(void *pvParameters) {
       telemetry.pitchDeg = g_pitchFilter.angleDeg();
       computeBalanceControl(telemetry, dtSeconds);
       computeSpeedLoopPreview(telemetry);
+      computeSpeedMixedOutput(telemetry);
       setError(telemetry, "ok");
     } else {
       telemetry.failedReadCount++;
       computeBalanceControl(telemetry, dtSeconds);
       computeSpeedLoopPreview(telemetry);
+      computeSpeedMixedOutput(telemetry);
       setError(telemetry, telemetry.imuReady ? readError : "imu not ready");
     }
 
@@ -385,8 +390,10 @@ void computeBalanceControl(BalanceTelemetry &telemetry, float dtSeconds) {
     telemetry.balanceOutputClamped = 0.0f;
   }
 
-  telemetry.balanceLeftPwm = static_cast<int>(telemetry.balanceOutputClamped);
-  telemetry.balanceRightPwm = static_cast<int>(telemetry.balanceOutputClamped);
+  telemetry.balanceMixedOutputRaw = telemetry.balanceOutputClamped;
+  telemetry.balanceMixedOutputClamped = telemetry.balanceOutputClamped;
+  telemetry.balanceLeftPwm = static_cast<int>(telemetry.balanceMixedOutputClamped);
+  telemetry.balanceRightPwm = static_cast<int>(telemetry.balanceMixedOutputClamped);
 }
 
 void computeSpeedLoopPreview(BalanceTelemetry &telemetry) {
@@ -406,7 +413,13 @@ void computeSpeedLoopPreview(BalanceTelemetry &telemetry) {
     return;
   }
 
-  telemetry.speedLoopSignedCommand = telemetry.balanceOutputClamped * telemetry.balanceMotorSign;
+  const float commandForDirection = telemetry.speedLoopMixEnabled
+                                        ? telemetry.balanceOutputClamped -
+                                              (telemetry.speedLoopOutput * telemetry.speedLoopMixScale)
+                                        : telemetry.balanceOutputClamped;
+  telemetry.speedLoopSignedCommand = clampFloat(commandForDirection, -telemetry.balanceOutputLimit,
+                                                telemetry.balanceOutputLimit) *
+                                     telemetry.balanceMotorSign;
   if (telemetry.speedLoopSignedCommand > 0.0f) {
     telemetry.speedLoopDirectionSign = 1;
   } else if (telemetry.speedLoopSignedCommand < 0.0f) {
@@ -453,6 +466,22 @@ void computeSpeedLoopPreview(BalanceTelemetry &telemetry) {
   telemetry.speedLoopSampleCount++;
 }
 
+void computeSpeedMixedOutput(BalanceTelemetry &telemetry) {
+  float mixedOutput = telemetry.balanceOutputClamped;
+  if (telemetry.balanceControlSafetyOk && telemetry.speedLoopMixEnabled && telemetry.speedLoopReady) {
+    mixedOutput = telemetry.balanceOutputClamped - (telemetry.speedLoopOutput * telemetry.speedLoopMixScale);
+  }
+
+  telemetry.balanceMixedOutputRaw = mixedOutput;
+  telemetry.balanceMixedOutputClamped = clampFloat(mixedOutput, -telemetry.balanceOutputLimit, telemetry.balanceOutputLimit);
+  if (!telemetry.balanceControlSafetyOk) {
+    telemetry.balanceMixedOutputClamped = 0.0f;
+  }
+
+  telemetry.balanceLeftPwm = static_cast<int>(telemetry.balanceMixedOutputClamped);
+  telemetry.balanceRightPwm = static_cast<int>(telemetry.balanceMixedOutputClamped);
+}
+
 void applyBalanceMotorOutput(BalanceTelemetry &telemetry) {
   telemetry.balanceDriveCommandSent = false;
 
@@ -480,7 +509,7 @@ void applyBalanceMotorOutput(BalanceTelemetry &telemetry) {
     return;
   }
 
-  const int pwm = clampPwm(telemetry.balanceOutputClamped * telemetry.balanceMotorSign);
+  const int pwm = clampPwm(telemetry.balanceMixedOutputClamped * telemetry.balanceMotorSign);
   telemetry.balanceLeftPwm = pwm;
   telemetry.balanceRightPwm = pwm;
 
@@ -509,6 +538,8 @@ void applyConfigToTelemetry(BalanceTelemetry &telemetry, const BalanceControlCon
   telemetry.balanceOutputLimit = config.outputLimit;
   telemetry.balanceMaxAbsAngleDeg = config.maxAbsAngleDeg;
   telemetry.balanceMotorSign = config.motorSign >= 0.0f ? 1.0f : -1.0f;
+  telemetry.speedLoopMixEnabled = config.speedMixEnabled;
+  telemetry.speedLoopMixScale = clampFloat(config.speedMixScale, 0.0f, 1.0f);
 }
 
 float clampFloat(float value, float minValue, float maxValue) {
@@ -549,7 +580,8 @@ void emitSerialTelemetry(const BalanceTelemetry &telemetry) {
     Serial.println(
         "balance_csv,ms,lastReadOk,calibrated,loopDtMs,failedReadCount,accelTiltXSmoothedDeg,accelTiltXDeg,"
         "accelAngleAyAzSmoothedDeg,accelAngleAxAySmoothedDeg,gyroXRateDps,gyroYRateDps,gyroZRateDps,"
-        "balanceControlSafetyOk,balanceOutputClamped,speedLoopSignedCommand,speedLoopDirectionSign,"
+        "balanceControlSafetyOk,balanceOutputClamped,balanceMixedOutputClamped,speedLoopSignedCommand,"
+        "speedLoopDirectionSign,"
         "balanceSafetyReason,lastError");
     headerPrinted = true;
   }
@@ -582,6 +614,8 @@ void emitSerialTelemetry(const BalanceTelemetry &telemetry) {
   Serial.print(telemetry.balanceControlSafetyOk ? 1 : 0);
   Serial.print(",");
   Serial.print(telemetry.balanceOutputClamped, 3);
+  Serial.print(",");
+  Serial.print(telemetry.balanceMixedOutputClamped, 3);
   Serial.print(",");
   Serial.print(telemetry.speedLoopSignedCommand, 3);
   Serial.print(",");

@@ -382,3 +382,18 @@ Result: Calibration completed with `balanceControlSafetyOk=true`. Runtime output
 Takeaway: The sign telemetry is working and the inferred speed-loop sign agrees with commanded balance PWM direction during physical wheel motion. The safety gate also cut motor output as intended when the hand tilt went outside the safe range.
 
 Next action: Re-run a shorter wheels-up test with smaller tilts that stay inside the safe window, then decide whether to add a guarded preview mixer that reports `balanceOutputClamped - speedLoopOutput` without applying it to motor PWM yet.
+
+
+## 2026-06-30: Low-Scale Speed Mix Test
+
+Goal: Move faster from preview-only speed-loop telemetry to real wheels-up speed correction while preserving explicit arm, output-limit, and angle safety gates.
+
+Setup: Speed-mix firmware uploaded over `/dev/cu.usbmodem11201`. Robot held wheels-up near upright and reachable at `http://192.168.4.53`. Encoders reset, gyro calibrated, runtime config set to `/balance/config?limit=45&speedMix=1&speedScale=0.10`, then balance output armed.
+
+Change: Added runtime speed-loop motor mixing. Default boot behavior keeps `speedMixEnabled=false`. When enabled, motor PWM uses `balanceOutputClamped - speedLoopOutput * speedLoopMixScale`, clamped to the active balance output limit. `/balance/status` now reports `balanceMixedOutputRaw`, `balanceMixedOutputClamped`, `speedLoopMixEnabled`, and `speedLoopMixScale`.
+
+Result: Build and upload succeeded. With speed mix enabled at `0.10`, the robot produced visible wheels-up correction while staying inside the safe angle window during the sampled run. Mixed output diverged from raw balance output as expected: one sample reduced forward command from `balanceOutputClamped=36.235` to `balanceMixedOutputClamped=19.285`, and another increased reverse command from `balanceOutputClamped=-23.556` to `balanceMixedOutputClamped=-39.317`. Signed encoder deltas continued to follow the mixed command direction, including positive deltas for positive mixed PWM and negative deltas for negative mixed PWM. Explicit `/balance/disarm` was sent after the test.
+
+Takeaway: Low-scale speed-loop correction can now affect real motor PWM under the existing safety gates. At `speedScale=0.10`, the speed integral can still push the mixed output to the clamp during aggressive tilts, so the next tuning step should focus on smaller tilts, lower speed scale, or integral reset/anti-windup behavior before wheels-down balancing attempts.
+
+Next action: Add speed-loop integral reset behavior when disarmed or direction changes, then repeat the low-scale wheels-up mix test with `speedScale=0.05` to reduce clamp hits.

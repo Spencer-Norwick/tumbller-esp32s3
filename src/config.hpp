@@ -54,6 +54,8 @@
 #define BALANCE_SPEED_KP 10.0f
 #define BALANCE_SPEED_KI 0.26f
 #define BALANCE_SPEED_INTEGRAL_LIMIT 3000.0f
+#define BALANCE_SPEED_MIX_ENABLED 0
+#define BALANCE_SPEED_MIX_SCALE 0.10f
 
 // WiFi / mDNS hostname
 #define WIFI_HOSTNAME "finland-tumbller-01"

@@ -6,14 +6,17 @@
 
 struct BalanceControlConfig {
   BalanceControlConfig() = default;
-  BalanceControlConfig(float setpoint, float kpValue, float kiValue, float kdValue, float limit, float maxAngle, float sign)
+  BalanceControlConfig(float setpoint, float kpValue, float kiValue, float kdValue, float limit, float maxAngle, float sign,
+                       bool speedMix, float speedScale)
       : setpointDeg(setpoint),
         kp(kpValue),
         ki(kiValue),
         kd(kdValue),
         outputLimit(limit),
         maxAbsAngleDeg(maxAngle),
-        motorSign(sign) {}
+        motorSign(sign),
+        speedMixEnabled(speedMix),
+        speedMixScale(speedScale) {}
 
   float setpointDeg = 0.0f;
   float kp = 0.0f;
@@ -22,6 +25,8 @@ struct BalanceControlConfig {
   float outputLimit = 0.0f;
   float maxAbsAngleDeg = 0.0f;
   float motorSign = 1.0f;
+  bool speedMixEnabled = false;
+  float speedMixScale = 0.0f;
 };
 
 struct BalanceTelemetry {
@@ -71,6 +76,8 @@ struct BalanceTelemetry {
   float balanceDTerm = 0.0f;
   float balanceOutputRaw = 0.0f;
   float balanceOutputClamped = 0.0f;
+  float balanceMixedOutputRaw = 0.0f;
+  float balanceMixedOutputClamped = 0.0f;
   int balanceLeftPwm = 0;
   int balanceRightPwm = 0;
   bool speedLoopReady = false;
@@ -80,6 +87,8 @@ struct BalanceTelemetry {
   long speedLoopDeltaRight = 0;
   float speedLoopSignedCommand = 0.0f;
   int speedLoopDirectionSign = 0;
+  bool speedLoopMixEnabled = false;
+  float speedLoopMixScale = 0.0f;
   float speedLoopCarSpeed = 0.0f;
   float speedLoopFilter = 0.0f;
   float speedLoopIntegral = 0.0f;

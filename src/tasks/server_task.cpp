@@ -295,6 +295,8 @@ static bool handleBalanceStatusRequest(WiFiClient &client, const String &header)
   jsonResponse += ",\"balanceDTerm\":" + String(telemetry.balanceDTerm, 3);
   jsonResponse += ",\"balanceOutputRaw\":" + String(telemetry.balanceOutputRaw, 3);
   jsonResponse += ",\"balanceOutputClamped\":" + String(telemetry.balanceOutputClamped, 3);
+  jsonResponse += ",\"balanceMixedOutputRaw\":" + String(telemetry.balanceMixedOutputRaw, 3);
+  jsonResponse += ",\"balanceMixedOutputClamped\":" + String(telemetry.balanceMixedOutputClamped, 3);
   jsonResponse += ",\"balanceLeftPwm\":" + String(telemetry.balanceLeftPwm);
   jsonResponse += ",\"balanceRightPwm\":" + String(telemetry.balanceRightPwm);
   jsonResponse += ",\"speedLoopReady\":" + String(jsonBool(telemetry.speedLoopReady));
@@ -304,6 +306,8 @@ static bool handleBalanceStatusRequest(WiFiClient &client, const String &header)
   jsonResponse += ",\"speedLoopDeltaRight\":" + String(telemetry.speedLoopDeltaRight);
   jsonResponse += ",\"speedLoopSignedCommand\":" + String(telemetry.speedLoopSignedCommand, 3);
   jsonResponse += ",\"speedLoopDirectionSign\":" + String(telemetry.speedLoopDirectionSign);
+  jsonResponse += ",\"speedLoopMixEnabled\":" + String(jsonBool(telemetry.speedLoopMixEnabled));
+  jsonResponse += ",\"speedLoopMixScale\":" + String(telemetry.speedLoopMixScale, 3);
   jsonResponse += ",\"speedLoopCarSpeed\":" + String(telemetry.speedLoopCarSpeed, 3);
   jsonResponse += ",\"speedLoopFilter\":" + String(telemetry.speedLoopFilter, 3);
   jsonResponse += ",\"speedLoopIntegral\":" + String(telemetry.speedLoopIntegral, 3);
@@ -352,6 +356,14 @@ static bool handleBalanceConfigRequest(WiFiClient &client, const String &header)
     config.motorSign = value < 0.0f ? -1.0f : 1.0f;
     updated = true;
   }
+  if (queryFloatParam(header, "speedMix", value)) {
+    config.speedMixEnabled = value >= 0.5f;
+    updated = true;
+  }
+  if (queryFloatParam(header, "speedScale", value)) {
+    config.speedMixScale = clampConfigValue(value, 0.0f, 1.0f);
+    updated = true;
+  }
 
   if (updated) {
     balance_set_config(config);
@@ -369,6 +381,8 @@ static bool handleBalanceConfigRequest(WiFiClient &client, const String &header)
   jsonResponse += ",\"outputLimit\":" + String(config.outputLimit, 3);
   jsonResponse += ",\"maxAbsAngleDeg\":" + String(config.maxAbsAngleDeg, 3);
   jsonResponse += ",\"motorSign\":" + String(config.motorSign, 1);
+  jsonResponse += ",\"speedMixEnabled\":" + String(jsonBool(config.speedMixEnabled));
+  jsonResponse += ",\"speedMixScale\":" + String(config.speedMixScale, 3);
   jsonResponse += "}";
   sendJson(client, "HTTP/1.1 200 OK", jsonResponse);
   return true;
