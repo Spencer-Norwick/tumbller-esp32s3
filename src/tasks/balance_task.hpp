@@ -78,6 +78,8 @@ struct BalanceTelemetry {
   unsigned long encoderTotalRight = 0;
   long speedLoopDeltaLeft = 0;
   long speedLoopDeltaRight = 0;
+  float speedLoopSignedCommand = 0.0f;
+  int speedLoopDirectionSign = 0;
   float speedLoopCarSpeed = 0.0f;
   float speedLoopFilter = 0.0f;
   float speedLoopIntegral = 0.0f;

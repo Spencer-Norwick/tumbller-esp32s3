@@ -159,6 +159,8 @@ void balanceTask(void *pvParameters) {
       telemetry.speedLoopFilter = 0.0f;
       telemetry.speedLoopIntegral = 0.0f;
       telemetry.speedLoopOutput = 0.0f;
+      telemetry.speedLoopSignedCommand = 0.0f;
+      telemetry.speedLoopDirectionSign = 0;
       telemetry.speedLoopSampleCount = 0;
       telemetry.speedLoopReady = false;
       setArmState(false);
@@ -397,9 +399,20 @@ void computeSpeedLoopPreview(BalanceTelemetry &telemetry) {
     telemetry.speedLoopReady = false;
     telemetry.speedLoopDeltaLeft = 0;
     telemetry.speedLoopDeltaRight = 0;
+    telemetry.speedLoopSignedCommand = 0.0f;
+    telemetry.speedLoopDirectionSign = 0;
     telemetry.speedLoopCarSpeed = 0.0f;
     telemetry.speedLoopOutput = 0.0f;
     return;
+  }
+
+  telemetry.speedLoopSignedCommand = telemetry.balanceOutputClamped * telemetry.balanceMotorSign;
+  if (telemetry.speedLoopSignedCommand > 0.0f) {
+    telemetry.speedLoopDirectionSign = 1;
+  } else if (telemetry.speedLoopSignedCommand < 0.0f) {
+    telemetry.speedLoopDirectionSign = -1;
+  } else {
+    telemetry.speedLoopDirectionSign = 0;
   }
 
   if (!telemetry.speedLoopReady || encoder.totalLeft < g_speedLoopLastEncoderLeft ||
@@ -428,10 +441,8 @@ void computeSpeedLoopPreview(BalanceTelemetry &telemetry) {
   g_speedLoopLastEncoderLeft = encoder.totalLeft;
   g_speedLoopLastEncoderRight = encoder.totalRight;
 
-  const float signedBalanceCommand = telemetry.balanceOutputClamped * telemetry.balanceMotorSign;
-  const int directionSign = signedBalanceCommand < 0.0f ? -1 : 1;
-  telemetry.speedLoopDeltaLeft = rawDeltaLeft * directionSign;
-  telemetry.speedLoopDeltaRight = rawDeltaRight * directionSign;
+  telemetry.speedLoopDeltaLeft = rawDeltaLeft * telemetry.speedLoopDirectionSign;
+  telemetry.speedLoopDeltaRight = rawDeltaRight * telemetry.speedLoopDirectionSign;
   telemetry.speedLoopCarSpeed = (telemetry.speedLoopDeltaLeft + telemetry.speedLoopDeltaRight) * 0.5f;
   telemetry.speedLoopFilter = (telemetry.speedLoopFilter * 0.7f) + (telemetry.speedLoopCarSpeed * 0.3f);
   telemetry.speedLoopIntegral += telemetry.speedLoopFilter;
@@ -538,7 +549,8 @@ void emitSerialTelemetry(const BalanceTelemetry &telemetry) {
     Serial.println(
         "balance_csv,ms,lastReadOk,calibrated,loopDtMs,failedReadCount,accelTiltXSmoothedDeg,accelTiltXDeg,"
         "accelAngleAyAzSmoothedDeg,accelAngleAxAySmoothedDeg,gyroXRateDps,gyroYRateDps,gyroZRateDps,"
-        "balanceControlSafetyOk,balanceOutputClamped,balanceSafetyReason,lastError");
+        "balanceControlSafetyOk,balanceOutputClamped,speedLoopSignedCommand,speedLoopDirectionSign,"
+        "balanceSafetyReason,lastError");
     headerPrinted = true;
   }
 
@@ -570,6 +582,10 @@ void emitSerialTelemetry(const BalanceTelemetry &telemetry) {
   Serial.print(telemetry.balanceControlSafetyOk ? 1 : 0);
   Serial.print(",");
   Serial.print(telemetry.balanceOutputClamped, 3);
+  Serial.print(",");
+  Serial.print(telemetry.speedLoopSignedCommand, 3);
+  Serial.print(",");
+  Serial.print(telemetry.speedLoopDirectionSign);
   Serial.print(",");
   Serial.print(telemetry.balanceSafetyReason);
   Serial.print(",");

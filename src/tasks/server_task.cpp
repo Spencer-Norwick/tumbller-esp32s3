@@ -302,6 +302,8 @@ static bool handleBalanceStatusRequest(WiFiClient &client, const String &header)
   jsonResponse += ",\"encoderTotalRight\":" + String(telemetry.encoderTotalRight);
   jsonResponse += ",\"speedLoopDeltaLeft\":" + String(telemetry.speedLoopDeltaLeft);
   jsonResponse += ",\"speedLoopDeltaRight\":" + String(telemetry.speedLoopDeltaRight);
+  jsonResponse += ",\"speedLoopSignedCommand\":" + String(telemetry.speedLoopSignedCommand, 3);
+  jsonResponse += ",\"speedLoopDirectionSign\":" + String(telemetry.speedLoopDirectionSign);
   jsonResponse += ",\"speedLoopCarSpeed\":" + String(telemetry.speedLoopCarSpeed, 3);
   jsonResponse += ",\"speedLoopFilter\":" + String(telemetry.speedLoopFilter, 3);
   jsonResponse += ",\"speedLoopIntegral\":" + String(telemetry.speedLoopIntegral, 3);

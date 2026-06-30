@@ -79,6 +79,14 @@ curl http://192.168.4.53/motor/stop
 7. For motor tests, put the robot wheels-up and keep fingers clear.
 8. Use Space or Escape in the dashboard to disarm and stop.
 
+## Wheels-Up Speed Sign Check
+
+1. Put the robot wheels-up, keep it stationary, and reset encoders.
+2. Calibrate, then use `/balance/config?limit=45` before arming.
+3. Arm balance output and gently pitch the chassis forward/back so the wheels visibly respond.
+4. Watch `/balance/status`: `speedLoopDirectionSign` should follow `speedLoopSignedCommand`, and `speedLoopDeltaLeft` / `speedLoopDeltaRight` should flip sign when the balance command flips sign.
+5. Disarm immediately after the sign check.
+
 ## Editing Firmware
 
 For a new telemetry variable:
