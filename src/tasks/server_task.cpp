@@ -31,6 +31,7 @@ static bool handleBalanceCalibrateRequest(WiFiClient &client, const String &head
 static bool handleSensorRequest(WiFiClient &client, const String &header);
 static bool handleMotorRequest(WiFiClient &client, const String &header);
 static bool queryFloatParam(const String &header, const char *name, float &value);
+static bool queryFloatParamForPath(const String &header, const char *path, const char *name, float &value);
 static float clampConfigValue(float value, float minValue, float maxValue);
 
 void server_task_start() {
@@ -256,6 +257,11 @@ static bool handleBalanceStatusRequest(WiFiClient &client, const String &header)
   jsonResponse += ",\"balanceMotorOutputArmed\":" + String(jsonBool(telemetry.balanceMotorOutputArmed));
   jsonResponse += ",\"balanceMotorOutputEnabled\":" + String(jsonBool(telemetry.balanceMotorOutputEnabled));
   jsonResponse += ",\"balanceDriveCommandSent\":" + String(jsonBool(telemetry.balanceDriveCommandSent));
+  jsonResponse += ",\"balanceArmStartedAtMs\":" + String(telemetry.balanceArmStartedAtMs);
+  jsonResponse += ",\"balanceArmTimeoutMs\":" + String(telemetry.balanceArmTimeoutMs);
+  jsonResponse += ",\"balanceArmElapsedMs\":" + String(telemetry.balanceArmElapsedMs);
+  jsonResponse += ",\"balanceArmRemainingMs\":" + String(telemetry.balanceArmRemainingMs);
+  jsonResponse += ",\"balanceRunSampleCount\":" + String(telemetry.balanceRunSampleCount);
   jsonResponse += ",\"imuAddress\":\"" + hexByte(telemetry.imuAddress) + "\"";
   jsonResponse += ",\"whoAmI\":\"" + hexByte(telemetry.whoAmI) + "\"";
   jsonResponse += ",\"whoAmICompatible\":" + String(jsonBool(telemetry.whoAmICompatible));
@@ -297,6 +303,9 @@ static bool handleBalanceStatusRequest(WiFiClient &client, const String &header)
   jsonResponse += ",\"balanceOutputClamped\":" + String(telemetry.balanceOutputClamped, 3);
   jsonResponse += ",\"balanceMixedOutputRaw\":" + String(telemetry.balanceMixedOutputRaw, 3);
   jsonResponse += ",\"balanceMixedOutputClamped\":" + String(telemetry.balanceMixedOutputClamped, 3);
+  jsonResponse += ",\"balanceMixedOutputSaturated\":" + String(jsonBool(telemetry.balanceMixedOutputSaturated));
+  jsonResponse += ",\"balanceMixedOutputSaturationCount\":" + String(telemetry.balanceMixedOutputSaturationCount);
+  jsonResponse += ",\"balanceMixedOutputSaturationRatio\":" + String(telemetry.balanceMixedOutputSaturationRatio, 3);
   jsonResponse += ",\"balanceLeftPwm\":" + String(telemetry.balanceLeftPwm);
   jsonResponse += ",\"balanceRightPwm\":" + String(telemetry.balanceRightPwm);
   jsonResponse += ",\"speedLoopReady\":" + String(jsonBool(telemetry.speedLoopReady));
@@ -393,12 +402,20 @@ static bool handleBalanceConfigRequest(WiFiClient &client, const String &header)
 static bool handleBalanceArmRequest(WiFiClient &client, const String &header) {
   if (header.indexOf("GET /balance/arm") < 0) return false;
 
+  float timeoutValue = 0.0f;
+  unsigned long timeoutMs = 0;
+  if (queryFloatParamForPath(header, "GET /balance/arm", "ms", timeoutValue)) {
+    timeoutMs = static_cast<unsigned long>(clampConfigValue(timeoutValue, 0.0f, BALANCE_ARM_MAX_RUNTIME_MS));
+  }
+
   char reason[64] = "";
-  const bool armed = balance_request_motor_arm(reason, sizeof(reason));
+  const bool armed = balance_request_motor_arm(reason, sizeof(reason), timeoutMs);
   String jsonResponse = "{";
   jsonResponse += "\"armed\":" + String(jsonBool(armed));
   jsonResponse += ",\"motorOutputAvailable\":" + String(jsonBool(BALANCE_MOTOR_OUTPUT_AVAILABLE != 0));
   jsonResponse += ",\"armMaxOutputLimit\":" + String(BALANCE_ARM_MAX_OUTPUT_LIMIT, 3);
+  jsonResponse += ",\"armMaxRuntimeMs\":" + String(BALANCE_ARM_MAX_RUNTIME_MS);
+  jsonResponse += ",\"requestedTimeoutMs\":" + String(timeoutMs);
   jsonResponse += ",\"reason\":\"" + String(reason) + "\"";
   jsonResponse += "}";
   sendJson(client, armed ? "HTTP/1.1 202 Accepted" : "HTTP/1.1 409 Conflict", jsonResponse);
@@ -427,7 +444,11 @@ static bool handleBalanceCalibrateRequest(WiFiClient &client, const String &head
 }
 
 static bool queryFloatParam(const String &header, const char *name, float &value) {
-  const int pathStart = header.indexOf("GET /balance/config");
+  return queryFloatParamForPath(header, "GET /balance/config", name, value);
+}
+
+static bool queryFloatParamForPath(const String &header, const char *path, const char *name, float &value) {
+  const int pathStart = header.indexOf(path);
   if (pathStart < 0) return false;
   const int queryStart = header.indexOf('?', pathStart);
   const int httpStart = header.indexOf(" HTTP", pathStart);

@@ -77,7 +77,7 @@ The first controller milestone computes a proposed balance output without applyi
 - Safety gates require a healthy sensor read, completed gyro calibration, and pitch within `+/-22 deg`.
 - If a gate fails, the clamped output is forced to zero and `/balance/status` reports `balanceSafetyReason`.
 - Balance motor output is available only through explicit runtime arming. The board starts disarmed after reset.
-- `/balance/arm` requires calibration, healthy sensor reads, pitch inside the configured safe window, and `outputLimit <= 45 pwm`.
+- `/balance/arm` requires calibration, healthy sensor reads, pitch inside the configured safe window, and `outputLimit <= 45 pwm`. `/balance/arm?ms=...` adds an optional bounded runtime, clamped by `BALANCE_ARM_MAX_RUNTIME_MS`, for short physical test runs.
 - `/balance/disarm` clears the runtime arm state and queues a motor stop.
 - `/balance/config` includes `motorSign` so first-motion polarity can be flipped without rebuilding.
 - Manual `/motor/*` diagnostics remain separate from balance telemetry.
@@ -89,6 +89,7 @@ The first controller milestone computes a proposed balance output without applyi
 - `/balance/status` also exposes `speedLoopSignedCommand` and `speedLoopDirectionSign` so wheels-up tests can verify that signed encoder deltas match the active balance PWM direction. A zero balance command reports direction `0` because direction cannot be inferred from single-channel encoders without a commanded wheel sign.
 - Speed-loop preview is observability only unless explicitly enabled at runtime with `/balance/config?speedMix=1&speedScale=...`. When enabled, motor PWM uses `balanceOutputClamped - speedLoopOutput * speedLoopMixScale`, clamped to the active balance output limit, while all existing arm and angle safety gates remain active.
 - Speed-loop dynamic state resets while disarmed, while unsafe, when encoder totals reset, near zero command, or when the inferred command direction changes. Runtime telemetry reports `speedLoopResetCount` and `speedLoopResetReason` so stale integral state is visible during test runs.
+- Physical test-run telemetry reports arm timing, sample count, mixed-output saturation count, and saturation ratio so tuning decisions can be based on bounded runs rather than open-ended observation.
 
 ## Milestone Checklist
 

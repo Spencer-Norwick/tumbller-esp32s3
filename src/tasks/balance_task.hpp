@@ -40,6 +40,11 @@ struct BalanceTelemetry {
   bool balanceMotorOutputAvailable = false;
   bool balanceMotorOutputArmed = false;
   bool balanceDriveCommandSent = false;
+  unsigned long balanceArmStartedAtMs = 0;
+  unsigned long balanceArmTimeoutMs = 0;
+  unsigned long balanceArmElapsedMs = 0;
+  unsigned long balanceArmRemainingMs = 0;
+  uint32_t balanceRunSampleCount = 0;
   uint8_t imuAddress = 0;
   uint8_t whoAmI = 0;
   bool whoAmICompatible = false;
@@ -78,6 +83,9 @@ struct BalanceTelemetry {
   float balanceOutputClamped = 0.0f;
   float balanceMixedOutputRaw = 0.0f;
   float balanceMixedOutputClamped = 0.0f;
+  bool balanceMixedOutputSaturated = false;
+  uint32_t balanceMixedOutputSaturationCount = 0;
+  float balanceMixedOutputSaturationRatio = 0.0f;
   int balanceLeftPwm = 0;
   int balanceRightPwm = 0;
   bool speedLoopReady = false;
@@ -108,5 +116,5 @@ void balance_get_status(BalanceTelemetry &out);
 void balance_get_raw(BalanceTelemetry &out);
 void balance_get_config(BalanceControlConfig &out);
 void balance_set_config(const BalanceControlConfig &config);
-bool balance_request_motor_arm(char *reason, size_t reasonSize);
+bool balance_request_motor_arm(char *reason, size_t reasonSize, unsigned long timeoutMs = 0);
 void balance_request_motor_disarm();

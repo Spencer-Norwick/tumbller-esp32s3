@@ -31,6 +31,10 @@ portMUX_TYPE g_configMux = portMUX_INITIALIZER_UNLOCKED;
 portMUX_TYPE g_armMux = portMUX_INITIALIZER_UNLOCKED;
 volatile bool g_calibrationRequested = false;
 bool g_balanceMotorArmed = false;
+unsigned long g_balanceArmStartedAtMs = 0;
+unsigned long g_balanceArmTimeoutMs = 0;
+uint32_t g_balanceRunSampleCount = 0;
+uint32_t g_balanceMixedSaturationCount = 0;
 unsigned long g_speedLoopLastEncoderLeft = 0;
 unsigned long g_speedLoopLastEncoderRight = 0;
 uint8_t g_speedLoopPeriodCount = 0;
@@ -41,8 +45,17 @@ void balanceTask(void *pvParameters);
 void publishTelemetry(const BalanceTelemetry &telemetry);
 void copyTelemetry(BalanceTelemetry &out);
 void copyConfig(BalanceControlConfig &out);
-bool copyArmState();
-void setArmState(bool armed);
+struct ArmRuntime {
+  bool armed = false;
+  unsigned long startedAtMs = 0;
+  unsigned long timeoutMs = 0;
+  uint32_t sampleCount = 0;
+  uint32_t saturationCount = 0;
+};
+ArmRuntime copyArmRuntime();
+void applyArmRuntimeToTelemetry(BalanceTelemetry &telemetry, const ArmRuntime &runtime);
+void recordArmSample(bool saturated);
+void setArmState(bool armed, unsigned long timeoutMs = 0);
 void setError(BalanceTelemetry &telemetry, const char *message);
 void setBalanceSafetyReason(BalanceTelemetry &telemetry, const char *message);
 void copyReason(char *reason, size_t reasonSize, const char *message);
@@ -90,7 +103,7 @@ void balance_set_config(const BalanceControlConfig &config) {
   taskEXIT_CRITICAL(&g_configMux);
 }
 
-bool balance_request_motor_arm(char *reason, size_t reasonSize) {
+bool balance_request_motor_arm(char *reason, size_t reasonSize, unsigned long timeoutMs) {
 #if BALANCE_MOTOR_OUTPUT_AVAILABLE == 0
   copyReason(reason, reasonSize, "motor output unavailable");
   return false;
@@ -117,8 +130,8 @@ bool balance_request_motor_arm(char *reason, size_t reasonSize) {
     return false;
   }
 
-  setArmState(true);
-  copyReason(reason, reasonSize, "armed");
+  setArmState(true, timeoutMs);
+  copyReason(reason, reasonSize, timeoutMs > 0 ? "armed timed" : "armed");
   return true;
 #endif
 }
@@ -240,16 +253,62 @@ void copyConfig(BalanceControlConfig &out) {
   taskEXIT_CRITICAL(&g_configMux);
 }
 
-bool copyArmState() {
+ArmRuntime copyArmRuntime() {
   taskENTER_CRITICAL(&g_armMux);
-  const bool armed = g_balanceMotorArmed;
+  ArmRuntime runtime;
+  runtime.armed = g_balanceMotorArmed;
+  runtime.startedAtMs = g_balanceArmStartedAtMs;
+  runtime.timeoutMs = g_balanceArmTimeoutMs;
+  runtime.sampleCount = g_balanceRunSampleCount;
+  runtime.saturationCount = g_balanceMixedSaturationCount;
   taskEXIT_CRITICAL(&g_armMux);
-  return armed;
+  return runtime;
 }
 
-void setArmState(bool armed) {
+void applyArmRuntimeToTelemetry(BalanceTelemetry &telemetry, const ArmRuntime &runtime) {
+  telemetry.balanceMotorOutputArmed = runtime.armed;
+  telemetry.balanceMotorOutputEnabled = telemetry.balanceMotorOutputAvailable && runtime.armed;
+  telemetry.balanceArmStartedAtMs = runtime.startedAtMs;
+  telemetry.balanceArmTimeoutMs = runtime.timeoutMs;
+  telemetry.balanceRunSampleCount = runtime.sampleCount;
+  telemetry.balanceMixedOutputSaturationCount = runtime.saturationCount;
+  telemetry.balanceMixedOutputSaturationRatio =
+      runtime.sampleCount > 0 ? static_cast<float>(runtime.saturationCount) / static_cast<float>(runtime.sampleCount)
+                              : 0.0f;
+
+  if (runtime.armed && runtime.startedAtMs > 0) {
+    const unsigned long elapsedMs = millis() - runtime.startedAtMs;
+    telemetry.balanceArmElapsedMs = elapsedMs;
+    telemetry.balanceArmRemainingMs =
+        runtime.timeoutMs > elapsedMs ? runtime.timeoutMs - elapsedMs : 0;
+  } else {
+    telemetry.balanceArmElapsedMs = 0;
+    telemetry.balanceArmRemainingMs = 0;
+  }
+}
+
+void recordArmSample(bool saturated) {
+  taskENTER_CRITICAL(&g_armMux);
+  if (g_balanceMotorArmed) {
+    g_balanceRunSampleCount++;
+    if (saturated) {
+      g_balanceMixedSaturationCount++;
+    }
+  }
+  taskEXIT_CRITICAL(&g_armMux);
+}
+
+void setArmState(bool armed, unsigned long timeoutMs) {
   taskENTER_CRITICAL(&g_armMux);
   g_balanceMotorArmed = armed;
+  if (armed) {
+    g_balanceArmStartedAtMs = millis();
+    g_balanceArmTimeoutMs = timeoutMs;
+    g_balanceRunSampleCount = 0;
+    g_balanceMixedSaturationCount = 0;
+  } else {
+    g_balanceArmTimeoutMs = 0;
+  }
   taskEXIT_CRITICAL(&g_armMux);
 }
 
@@ -520,8 +579,11 @@ void computeSpeedMixedOutput(BalanceTelemetry &telemetry) {
   }
 
   telemetry.balanceMixedOutputRaw = mixedOutput;
+  telemetry.balanceMixedOutputSaturated =
+      mixedOutput > telemetry.balanceOutputLimit || mixedOutput < -telemetry.balanceOutputLimit;
   telemetry.balanceMixedOutputClamped = clampFloat(mixedOutput, -telemetry.balanceOutputLimit, telemetry.balanceOutputLimit);
   if (!telemetry.balanceControlSafetyOk) {
+    telemetry.balanceMixedOutputSaturated = false;
     telemetry.balanceMixedOutputClamped = 0.0f;
   }
 
@@ -538,23 +600,36 @@ void applyBalanceMotorOutput(BalanceTelemetry &telemetry) {
   telemetry.balanceMotorOutputEnabled = false;
   return;
 #else
-  const bool armed = copyArmState();
+  ArmRuntime runtime = copyArmRuntime();
   telemetry.balanceMotorOutputAvailable = true;
-  telemetry.balanceMotorOutputArmed = armed;
-  telemetry.balanceMotorOutputEnabled = armed;
+  applyArmRuntimeToTelemetry(telemetry, runtime);
 
-  if (!armed) {
+  if (!runtime.armed) {
+    return;
+  }
+
+  if (runtime.timeoutMs > 0 && runtime.startedAtMs > 0 && millis() - runtime.startedAtMs >= runtime.timeoutMs) {
+    setArmState(false);
+    runtime = copyArmRuntime();
+    applyArmRuntimeToTelemetry(telemetry, runtime);
+    telemetry.balanceIntegralError = 0.0f;
+    setBalanceSafetyReason(telemetry, "arm timeout");
+    queueMotorStop();
     return;
   }
 
   if (!telemetry.balanceControlSafetyOk) {
     setArmState(false);
-    telemetry.balanceMotorOutputArmed = false;
-    telemetry.balanceMotorOutputEnabled = false;
+    runtime = copyArmRuntime();
+    applyArmRuntimeToTelemetry(telemetry, runtime);
     telemetry.balanceIntegralError = 0.0f;
     queueMotorStop();
     return;
   }
+
+  recordArmSample(telemetry.balanceMixedOutputSaturated);
+  runtime = copyArmRuntime();
+  applyArmRuntimeToTelemetry(telemetry, runtime);
 
   const int pwm = clampPwm(telemetry.balanceMixedOutputClamped * telemetry.balanceMotorSign);
   telemetry.balanceLeftPwm = pwm;
@@ -576,8 +651,7 @@ void applyBalanceMotorOutput(BalanceTelemetry &telemetry) {
 void applyConfigToTelemetry(BalanceTelemetry &telemetry, const BalanceControlConfig &config) {
   telemetry.balanceControllerEnabled = BALANCE_CONTROLLER_COMPUTE_ENABLED != 0;
   telemetry.balanceMotorOutputAvailable = BALANCE_MOTOR_OUTPUT_AVAILABLE != 0;
-  telemetry.balanceMotorOutputArmed = copyArmState();
-  telemetry.balanceMotorOutputEnabled = telemetry.balanceMotorOutputAvailable && telemetry.balanceMotorOutputArmed;
+  applyArmRuntimeToTelemetry(telemetry, copyArmRuntime());
   telemetry.balanceSetpointDeg = config.setpointDeg;
   telemetry.balanceKp = config.kp;
   telemetry.balanceKi = config.ki;

@@ -412,3 +412,17 @@ Result: Build and upload succeeded. After reset and before arming, `/balance/sta
 Takeaway: The speed loop now behaves more like a controlled inner state machine instead of an always-accumulating preview. This is closer to controls best practice for the current hardware constraints: reset hidden state at mode transitions, prevent integral windup against output clamps, and keep reset reasons observable during physical tests.
 
 Next action: Add a tighter balance-test profile for wheels-up/wheels-down transition work: lower default test scale, a shorter arm timeout or timed arm endpoint, and telemetry that reports clamp duty or saturation count during a run.
+
+## 2026-06-30: Bounded Timed Arm Run
+
+Goal: Make physical balance tests faster and safer by adding a time-bounded arm command plus run-level telemetry, so each motion trial has an automatic stop and a compact summary.
+
+Setup: Timed-arm firmware uploaded over `/dev/cu.usbmodem11201`. Robot reachable at `http://192.168.4.53`, held wheels-up near upright, gyro calibrated, and runtime config set to `/balance/config?limit=45&speedMix=1&speedScale=0.05`.
+
+Change: Added `/balance/arm?ms=<duration>` with a firmware cap of `BALANCE_ARM_MAX_RUNTIME_MS=5000`. `/balance/status` now reports arm runtime fields (`balanceArmStartedAtMs`, `balanceArmTimeoutMs`, `balanceArmElapsedMs`, `balanceArmRemainingMs`, `balanceRunSampleCount`) and mixed-output saturation fields (`balanceMixedOutputSaturated`, `balanceMixedOutputSaturationCount`, `balanceMixedOutputSaturationRatio`).
+
+Result: Build and upload succeeded. `/balance/arm?ms=1500` returned `armed=true` with `requestedTimeoutMs=1500`. Follow-up status polling showed the firmware had automatically disarmed motor output, with `balanceMotorOutputArmed=false`, `balanceMotorOutputEnabled=false`, `balanceDriveCommandSent=false`, `balanceRunSampleCount=209`, `balanceMixedOutputSaturationCount=0`, `balanceMixedOutputSaturationRatio=0.000`, and `balanceSafetyReason="ok"`. An explicit `/balance/disarm` was sent afterward and volatile `speedMix` was disabled.
+
+Takeaway: Short physical trials no longer depend on manual timing or dashboard latency to stop motor output. The run summary also makes each trial easier to compare: sample count confirms the run actually executed, and saturation ratio reports whether the speed mix spent time pinned at the PWM limit.
+
+Next action: Use timed arms as the default motion-test envelope. Run a few repeatable `1000-1500 ms` wheels-up trials with controlled small tilts, then move to the first wheels-down tethered test only after output saturation remains low and the direction/sign behavior stays consistent.
