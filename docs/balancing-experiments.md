@@ -367,3 +367,18 @@ Result: `platformio run` passed and the firmware uploaded successfully. `/balanc
 Takeaway: The speed-loop math is now visible without changing motor behavior. The implementation still infers signed pulses from the proposed balance command sign because the current encoder signal is single-channel pulse count, not quadrature direction.
 
 Next action: With the robot wheels-up, run short controlled balance-drive pulses and verify signed speed-loop deltas agree with physical forward/back motion on both wheels before mixing `speedLoopOutput` into motor commands.
+
+
+## 2026-06-30: Wheels-Up Speed Sign Validation
+
+Goal: Verify that speed-loop preview signs follow the active balance PWM direction during real wheels-up motion before allowing speed correction to affect motor output.
+
+Setup: Firmware commit `6043832` uploaded to the Arduino Nano ESP32 over `/dev/cu.usbmodem11201`. Robot reachable at `http://192.168.4.53`. Robot held wheels-up near upright. Encoders reset before calibration.
+
+Change: No control behavior change during the test. Used the new `/balance/status` fields `speedLoopSignedCommand` and `speedLoopDirectionSign` to make the inferred encoder direction explicit.
+
+Result: Calibration completed with `balanceControlSafetyOk=true`. Runtime output limit was reduced to `45 pwm`, then `/balance/arm` returned `armed=true`. During forward tilt, `speedLoopSignedCommand=45.000`, `speedLoopDirectionSign=1`, and signed encoder deltas were positive on both wheels, for example `speedLoopDeltaLeft=18`, `speedLoopDeltaRight=17`. During reverse correction, `speedLoopSignedCommand=-39.075`, `speedLoopDirectionSign=-1`, and signed deltas flipped negative/near-zero as the wheels changed direction, for example `speedLoopDeltaLeft=0`, `speedLoopDeltaRight=-1`. When pitch exceeded the `+/-22 deg` safe window, firmware forced `balanceOutputClamped=0`, reported `balanceSafetyReason="angle outside safe window"`, and auto-disarmed motor output. An explicit `/balance/disarm` was sent after the run.
+
+Takeaway: The sign telemetry is working and the inferred speed-loop sign agrees with commanded balance PWM direction during physical wheel motion. The safety gate also cut motor output as intended when the hand tilt went outside the safe range.
+
+Next action: Re-run a shorter wheels-up test with smaller tilts that stay inside the safe window, then decide whether to add a guarded preview mixer that reports `balanceOutputClamped - speedLoopOutput` without applying it to motor PWM yet.
