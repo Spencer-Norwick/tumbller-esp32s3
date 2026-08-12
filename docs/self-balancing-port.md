@@ -105,4 +105,4 @@ The first controller milestone computes a proposed balance output without applyi
 - [x] Validate first controlled balance motor motion on hardware.
 - [x] Expose encoder telemetry and validate left/right pulse counts.
 - [x] Port Elegoo's encoder-based speed loop into preview telemetry.
-- [ ] Validate speed-loop preview signs during short wheels-up balance-drive tests.
+- [x] Validate speed-loop preview signs during short wheels-up balance-drive tests.

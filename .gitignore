@@ -1,5 +1,7 @@
 .pio
 .platformio-core
+__pycache__/
+*.py[cod]
 .DS_Store
 src/.DS_Store
 .vscode/.browse.c_cpp.db*
