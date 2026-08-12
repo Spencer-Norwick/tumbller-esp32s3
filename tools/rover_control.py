@@ -677,7 +677,7 @@ HTML = """<!doctype html>
             <label class="pid-row"><span>Motor sign</span><select id="gainMotorSign"><option value="1">+1</option><option value="-1">-1</option></select></label>
             <label class="pid-row"><span>Speed mix</span><select id="gainSpeedMix"><option value="0">off</option><option value="1">on</option></select></label>
             <label class="pid-row"><span>Mix scale</span><input id="gainSpeedScale" inputmode="decimal" value="0.05"></label>
-            <label class="pid-row"><span>Arm ms</span><input id="armDuration" inputmode="numeric" value="1500"></label>
+            <label class="pid-row"><span>Arm ms</span><input id="armDuration" inputmode="numeric" value="5000"></label>
           </div>
           <div class="row" style="margin-top: 10px;">
             <button id="profileTether">Angle-only Tether</button>
@@ -700,7 +700,7 @@ HTML = """<!doctype html>
           <div class="checklist">
             <label class="check"><input type="checkbox"><span>Tether catches the robot before the body hits the floor; wheels still touch freely.</span></label>
             <label class="check"><input type="checkbox"><span>Calibrate while stationary, upright, and slack on the tether.</span></label>
-            <label class="check"><input type="checkbox"><span>Start with Angle-only Tether, speed mix off, Ki zero, 1000-1500 ms arm.</span></label>
+            <label class="check"><input type="checkbox"><span>Start with Angle-only Tether, speed mix off, Ki zero, 5000 ms arm.</span></label>
             <label class="check"><input type="checkbox"><span>Watch physical behavior first: correct direction, underpowered, oscillating, or saturating.</span></label>
             <label class="check"><input type="checkbox"><span>Only enable Low Speed Mix after angle-only correction pushes the right way.</span></label>
           </div>
@@ -1146,7 +1146,7 @@ HTML = """<!doctype html>
     }
 
     const runtimeProfiles = {
-      tether: { kp: "5.0", ki: "0.0", kd: "0.15", limit: "45", setpoint: "0.0", maxAngle: "18", motorSign: "1", speedMix: "0", speedScale: "0.05", armMs: "1500" },
+      tether: { kp: "5.0", ki: "0.0", kd: "0.15", limit: "90", setpoint: "0.0", maxAngle: "22", motorSign: "1", speedMix: "0", speedScale: "0.05", armMs: "5000" },
       speedMix: { kp: "5.0", ki: "0.0", kd: "0.15", limit: "45", setpoint: "0.0", maxAngle: "22", motorSign: "1", speedMix: "1", speedScale: "0.05", armMs: "1500" },
     };
 

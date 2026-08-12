@@ -426,3 +426,45 @@ Result: Build and upload succeeded. `/balance/arm?ms=1500` returned `armed=true`
 Takeaway: Short physical trials no longer depend on manual timing or dashboard latency to stop motor output. The run summary also makes each trial easier to compare: sample count confirms the run actually executed, and saturation ratio reports whether the speed mix spent time pinned at the PWM limit.
 
 Next action: Use timed arms as the default motion-test envelope. Run a few repeatable `1000-1500 ms` wheels-up trials with controlled small tilts, then move to the first wheels-down tethered test only after output saturation remains low and the direction/sign behavior stays consistent.
+
+## 2026-08-12: First Angle-Only Tether-Profile Trial
+
+Goal: Resume physical balance work with a bounded wheels-up trial and determine whether the conservative angle-only tether profile provides enough authority to judge correction behavior.
+
+Setup: Firmware commit `8ba5f24` uploaded over `/dev/cu.usbmodem101`; robot reachable at `http://192.168.4.53`; robot confirmed wheels-up and clear. Gyro calibration completed with zero failed reads. Encoders were reset and runtime config was `Kp=5.0`, `Ki=0.0`, `Kd=0.15`, output limit `45 pwm`, max angle `18 deg`, `motorSign=+1`, and speed mix disabled. The arm duration was `1000 ms`.
+
+Change: No firmware behavior changed for this trial. The robot was armed with `/balance/arm?ms=1000`, sampled during the run, then explicitly disarmed and stopped.
+
+Result: The timed arm was accepted and completed `139` control samples. At `7.005 deg` pitch the controller commanded both motors at approximately `+34 pwm`; at `11.663 deg` pitch it reached the `+45 pwm` limit. The operator observed both wheels moving, but the response was too small and conservative to judge useful correction behavior confidently. The final encoder totals were left `0`, right `7`, despite the visual observation that both wheels moved. After the run, pitch moved outside the configured `18 deg` window and the safety gate forced output to zero with reason `angle outside safe window`. An explicit disarm and motor stop were sent.
+
+Takeaway: The bounded arm path, automatic timeout, explicit stop, and angle safety gate worked. The 45-PWM/18-degree profile is too conservative for a useful wheels-up authority judgment. The sparse encoder totals from this short low-output run are not sufficient to conclude that the left motor failed, because both wheels moved visibly.
+
+Next action: Raise only the firmware arm ceiling from `45` to `60 pwm`, retain the previously validated `22 deg` angle window, and repeat one `1000 ms` wheels-up angle-only trial with speed mixing disabled.
+
+## 2026-08-12: 60-PWM Wheels-Up Trial Was Still Too Constrained
+
+Goal: Determine whether a modest increase from `45` to `60 pwm` and from an `18` to `22 deg` angle window made the wheels-up response observable enough to classify.
+
+Setup: Robot remained wheels-up and clear. Firmware with a `60 pwm` arm ceiling was built and uploaded after explicit approval. After reset, gyro calibration completed with zero failed reads; encoders were reset; runtime config was `Kp=5.0`, `Ki=0.0`, `Kd=0.15`, output limit `60 pwm`, max angle `22 deg`, `motorSign=+1`, and speed mix disabled. The arm duration was `1000 ms`.
+
+Change: The robot was armed with `/balance/arm?ms=1000`, sampled during the run, then explicitly disarmed and stopped.
+
+Result: The arm completed `139` samples. Commanded output rose from approximately `46 pwm` at `9.290 deg` pitch to `55 pwm` at `11.169 deg`, then reached the `60 pwm` limit. Pitch remained inside the `22 deg` window, the safety reason stayed `ok`, and the timed arm stopped normally. Encoder totals ended left `0`, right `4`. The operator still could not see enough useful behavior to classify the response: the one-second interval allowed only a slight tilt and produced little more than a brief motor buzz.
+
+Takeaway: The controller and safety mechanisms behaved as configured, but the experiment design was over-constrained for human observation. Repeating one-second trials would not produce useful evidence. The next wheels-up evaluation needs both enough motor authority to be visually obvious and enough time to move through forward, upright, and backward positions deliberately.
+
+Next action: Raise the wheels-up arm ceiling to `90 pwm` and use a `5000 ms`, `30 deg`, angle-only trial with `Ki=0` and speed mixing disabled. Retain sensor-health gating, the 80 ms motor-command watchdog, automatic timed disarm, and explicit stop.
+
+## 2026-08-12: Observable 90-PWM Wheels-Up Authority Test
+
+Goal: Produce an observable, human-usable wheels-up test that can establish correction direction and motor authority before the first tethered wheels-down attempt.
+
+Setup: After explicit approval, firmware with a `90 pwm` arm ceiling was uploaded over `/dev/cu.usbmodem101`. The robot remained wheels-up and clear. Gyro calibration completed with zero failed reads; encoders were reset; runtime config was `Kp=5.0`, `Ki=0.0`, `Kd=0.15`, output limit `90 pwm`, max angle `30 deg`, `motorSign=+1`, and speed mix disabled. The arm duration was `5000 ms`.
+
+Change: The operator deliberately tilted forward, returned through upright, and tilted backward during one `/balance/arm?ms=5000` run. Telemetry was sampled throughout, followed by explicit disarm and motor stop.
+
+Result: The timed run completed `698` control samples with zero sensor failures. Forward-side output rose to `+84 pwm` and then `+90 pwm`; after crossing through upright, reverse-side output reached `-90 pwm`. Encoder totals reached left `656` and right `835`, resolving the earlier low-output ambiguity by proving both wheels were active. The operator confirmed that correction was visibly in the correct direction for both forward and backward tilt and that motion was controlled rather than violent. Automatic timeout worked. After the run, movement briefly crossed the `30 deg` window and the safety gate forced output to zero; an explicit disarm and motor stop were also sent.
+
+Takeaway: The 90-PWM, five-second envelope is the first resumed test that produced clear physical evidence. Motor polarity, bidirectional correction, sensor health, encoder activity, timed shutdown, and angle gating are all adequate to advance from wheels-up observation to the first overhead-tether wheels-down attempt.
+
+Next action: Rig a slack overhead tether with both wheels touching freely, calibrate upright, and run one `5000 ms` angle-only trial at `Kp=5.0`, `Ki=0.0`, `Kd=0.15`, output limit `90 pwm`, max angle `22 deg`, and speed mixing disabled.

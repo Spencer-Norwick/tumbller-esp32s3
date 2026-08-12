@@ -99,6 +99,15 @@ curl http://192.168.4.53/motor/stop
 4. Watch `/balance/status`: `speedLoopDirectionSign` should follow `speedLoopSignedCommand`, and `speedLoopDeltaLeft` / `speedLoopDeltaRight` should flip sign when the balance command flips sign.
 5. Disarm immediately after the sign check.
 
+## Wheels-Up Authority Check
+
+Use this only after both wheels respond during the 45-PWM sign check and the robot remains wheels-up. The purpose is to provide enough time and motor authority for a human to classify the response, not to balance on the floor.
+
+1. Keep `Ki=0` and speed mixing disabled, then set `/balance/config?limit=90&maxAngle=30&speedMix=0`.
+2. Arm for `5000 ms` and slowly tilt forward, return through upright, then tilt backward. Do not hold the chassis against the angle limit.
+3. Confirm both wheels respond together and classify the correction direction and strength in both directions.
+4. Disarm and stop after the timed run. Do not continue if either wheel fails to respond, the direction is wrong, or the motion is violent or ambiguous.
+
 ## Wheels-Up Speed Mix Check
 
 1. Complete the speed sign check first.
@@ -112,7 +121,7 @@ Start with the dashboard, not raw curl, so the same screen controls the arm time
 
 1. Rig the tether so it catches the body before a fall, but leaves the wheels touching the floor freely. Keep the tether slack at upright.
 2. Open the dashboard, press `DISARM / STOP`, then `Calibrate Gyro` while the robot is stationary and upright.
-3. Press `Angle-only Tether`. This applies `Kp=5.0`, `Ki=0.0`, `Kd=0.15`, `limit=45`, `maxAngle=18`, `speedMix=off`, and `Arm ms=1500`.
+3. Press `Angle-only Tether`. This applies `Kp=5.0`, `Ki=0.0`, `Kd=0.15`, `limit=90`, `maxAngle=22`, `speedMix=off`, and `Arm ms=5000`. This profile follows the successful wheels-up authority test; use it only with the overhead tether rigged.
 4. Press `Arm Timed` and watch the robot, not just the numbers. Classify the run as: correct-direction catch, wrong-direction fall, underpowered fall, oscillation, or saturation.
 5. After each run, check `Run saturation`, `Mixed output`, `Safety reason`, `Arm timer`, and `Trace safety samples`.
 6. Tune angle loop first. If it falls the correct direction but weakly, increase `Kp` or `limit` slightly. If it snaps/oscillates, lower `Kp` or raise `Kd` slightly. Keep `Ki=0` for these trials.

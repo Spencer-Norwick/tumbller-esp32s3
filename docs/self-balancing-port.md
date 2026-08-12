@@ -77,7 +77,7 @@ The first controller milestone computes a proposed balance output without applyi
 - Safety gates require a healthy sensor read, completed gyro calibration, and pitch within `+/-22 deg`.
 - If a gate fails, the clamped output is forced to zero and `/balance/status` reports `balanceSafetyReason`.
 - Balance motor output is available only through explicit runtime arming. The board starts disarmed after reset.
-- `/balance/arm` requires calibration, healthy sensor reads, pitch inside the configured safe window, and `outputLimit <= 45 pwm`. `/balance/arm?ms=...` adds an optional bounded runtime, clamped by `BALANCE_ARM_MAX_RUNTIME_MS`, for short physical test runs.
+- `/balance/arm` requires calibration, healthy sensor reads, pitch inside the configured safe window, and `outputLimit <= 90 pwm`. `/balance/arm?ms=...` adds an optional bounded runtime, clamped by `BALANCE_ARM_MAX_RUNTIME_MS`, for short physical test runs.
 - `/balance/disarm` clears the runtime arm state and queues a motor stop.
 - `/balance/config` includes `motorSign` so first-motion polarity can be flipped without rebuilding.
 - Manual `/motor/*` diagnostics remain separate from balance telemetry.
