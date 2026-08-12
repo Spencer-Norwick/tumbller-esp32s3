@@ -550,3 +550,17 @@ Result: Firmware response was immediate and continuous through the run. At `+1.1
 Telemetry issue found: The reported saturation flag remained false even when the raw angle output exceeded the limit, because saturation was evaluated after the angle term had already been clamped. Update the saturation calculation to count either raw angle output or post-mix output exceeding the active limit, and retain a host regression test for both signs.
 
 Next action: Confirm the operator-observed response was prompt and correct. Build/upload the saturation fix, then repeat a smaller-amplitude wheels-up run if needed; otherwise use the responsive angle-only profile for the next slack-tether floor trial.
+
+## 2026-08-12: High-Rate Responsive Profile Validation
+
+Goal: Resolve the remaining subjective reversal-delay question with an onboard trace fast enough to compare estimated angle, requested PWM, actually applied PWM, and encoder motion without HTTP polling aliasing.
+
+Change: Add a 512-sample balance trace ring recorded at `20 ms` intervals. Each timed arm automatically clears and starts the trace. Samples include raw accelerometer pitch, filtered pitch, gyro rate, raw/clamped controller output, requested PWM, motor-task-applied PWM and timestamp, encoder totals, arm/safety state, and saturation. Recording retains five post-disarm samples and `/balance/trace` streams the completed JSON.
+
+Setup: Firmware included the corrected saturation calculation and onboard recorder. Both wheels were clear, gyro calibration completed while stationary, and the robot used the same measured responsive profile: `Kp=35`, `Ki=0`, `Kd=0.5`, limit `90 pwm`, max angle `45 deg`, speed mixing disabled, and a `10000 ms` timed arm. The operator deliberately rocked through repeated reversals.
+
+Result: The trace captured `465` armed samples over `9991 ms` plus five post-stop samples. Pitch ranged from `-22.381` to `+13.246 deg`; the requested PWM changed sign `13` times. Requested and actually applied left/right PWM matched in every armed trace sample, with a maximum observed applied-command age of `1 ms`. Encoder gains were left `1481` and right `1492` pulses. Corrected saturation telemetry counted `371/465` armed samples (`79.8%`), consistent with deliberate large-amplitude rocking against the `90 pwm` cap. Automatic timed disarm and the post-stop `0 pwm` state were captured. The operator reported: “Wow that was a lot more responsive.”
+
+Takeaway: The responsive `Kp=35`, `Kd=0.5` angle profile is now physically validated wheels-up. The trace recorder and saturation fix did not alter the control law; they prove that reversals reach the motor task without software delay. The improvement over the earlier low-gain behavior comes from crossing the measured motor startup threshold near upright. The high saturation fraction belongs to this deliberately large wheels-up rocking run and must be reevaluated during the floor trial rather than treated as acceptable steady balance behavior.
+
+Next action: Put the robot wheels-down under the slack overhead tether, recalibrate upright, apply the same responsive angle-only profile, and run one `10000 ms` floor trial. Classify whether it catches, oscillates, or saturates, then read `/balance/trace` before changing gains.

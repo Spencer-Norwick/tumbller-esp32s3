@@ -110,6 +110,34 @@ struct BalanceTelemetry {
   char speedLoopResetReason[40] = "not reset";
 };
 
+struct BalanceTraceSample {
+  unsigned long atMs = 0;
+  float accelPitchDeg = 0.0f;
+  float pitchDeg = 0.0f;
+  float gyroRateDps = 0.0f;
+  float outputRaw = 0.0f;
+  float outputClamped = 0.0f;
+  int16_t requestedLeftPwm = 0;
+  int16_t requestedRightPwm = 0;
+  int16_t appliedLeftPwm = 0;
+  int16_t appliedRightPwm = 0;
+  unsigned long appliedAtMs = 0;
+  uint32_t appliedSequence = 0;
+  unsigned long encoderLeft = 0;
+  unsigned long encoderRight = 0;
+  bool armed = false;
+  bool safetyOk = false;
+  bool saturated = false;
+};
+
+struct BalanceTraceMeta {
+  uint16_t count = 0;
+  uint16_t capacity = 0;
+  unsigned long samplePeriodMs = 0;
+  uint32_t totalSamples = 0;
+  bool recording = false;
+};
+
 void balance_task_start();
 bool balance_request_calibration();
 void balance_get_status(BalanceTelemetry &out);
@@ -118,3 +146,5 @@ void balance_get_config(BalanceControlConfig &out);
 void balance_set_config(const BalanceControlConfig &config);
 bool balance_request_motor_arm(char *reason, size_t reasonSize, unsigned long timeoutMs = 0);
 void balance_request_motor_disarm();
+void balance_get_trace_meta(BalanceTraceMeta &out);
+bool balance_get_trace_sample(uint16_t chronologicalIndex, BalanceTraceSample &out);

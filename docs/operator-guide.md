@@ -6,7 +6,7 @@ This guide is for local firmware bring-up and balance-control validation.
 
 - Firmware repo: this repository.
 - Working branch: `feature/self-balancing-sensor-validation`
-- Local dashboard/proxy: `tools/rover_control.py` in this repo; `/Users/spencer/Desktop/Projects/yak_rover/rover_control.py` is the current working copy used during bring-up.
+- Local dashboard/proxy: `tools/rover_control.py` in this repo.
 - Current robot URL: `http://192.168.4.53`
 - Current USB upload port: `/dev/cu.usbmodem101`
 
@@ -29,12 +29,6 @@ From this repo:
 python3 tools/rover_control.py --rover-url http://192.168.4.53 serve --host 127.0.0.1 --port 8787
 ```
 
-The older workspace copy also works and should be kept in sync while bring-up is active:
-
-```sh
-python3 /Users/spencer/Desktop/Projects/yak_rover/rover_control.py --rover-url http://192.168.4.53 serve --host 127.0.0.1 --port 8787
-```
-
 Open:
 
 ```text
@@ -50,6 +44,7 @@ curl http://192.168.4.53/info
 curl http://192.168.4.53/i2c/scan
 curl http://192.168.4.53/imu/raw
 curl http://192.168.4.53/balance/status
+curl http://192.168.4.53/balance/trace
 curl http://192.168.4.53/encoder/status
 ```
 
@@ -143,6 +138,14 @@ Start with the dashboard, not raw curl, so the same screen controls the arm time
 7. Use `Low Speed Mix (Later)` only after angle-only behavior pushes the right way. Keep `speedScale=0.05` until saturation is rare and the physical behavior is understandable.
 
 Stop criteria for a trial: wrong motor direction, repeated saturation, safety blocked, violent oscillation, tether carrying most of the weight, or uncertainty about what happened.
+
+After every timed balance arm, download the onboard `20 ms` trace before arming again (a new arm clears it):
+
+```sh
+curl --output /tmp/tumbller-balance-trace.json http://192.168.4.53/balance/trace
+```
+
+The trace holds up to 512 chronological samples and continues for five samples after disarm. Compare `pitchDeg`, `gyroRateDps`, `outputRaw`, `requestedLeftPwm`, `appliedLeftPwm`, `appliedAtMs`, and encoder totals around reversals. A floor run with sustained saturation is a tuning result, not a successful balance demonstration.
 
 ## Editing Firmware
 

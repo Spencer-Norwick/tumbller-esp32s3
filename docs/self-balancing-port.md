@@ -94,6 +94,7 @@ The first controller milestone computes a proposed balance output without applyi
 - Speed-loop dynamic state resets while disarmed, while unsafe, when encoder totals reset, near zero command, or when the inferred command direction changes. Runtime telemetry reports `speedLoopResetCount` and `speedLoopResetReason` so stale integral state is visible during test runs.
 - Physical test-run telemetry reports arm timing, sample count, mixed-output saturation count, and saturation ratio so tuning decisions can be based on bounded runs rather than open-ended observation.
 - Saturation telemetry counts either angle-loop raw output or the post-speed-mix output exceeding the active limit; clamping the angle term before mixing no longer hides angle-only saturation.
+- Each arm starts a 512-sample onboard trace at `20 ms` intervals. `/balance/trace` returns chronological raw accelerometer pitch, filtered pitch, gyro rate, controller output, requested and motor-task-applied PWM, applied timestamp/sequence, encoders, safety, saturation, and five post-disarm samples. This trace is the source of truth for sub-second reversal diagnosis; the browser dashboard's one-second history is for human overview only.
 
 ## Milestone Checklist
 

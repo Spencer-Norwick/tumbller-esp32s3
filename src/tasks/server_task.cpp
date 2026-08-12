@@ -27,6 +27,7 @@ static bool handleBalanceConfigRequest(WiFiClient &client, const String &header)
 static bool handleBalanceArmRequest(WiFiClient &client, const String &header);
 static bool handleBalanceDisarmRequest(WiFiClient &client, const String &header);
 static bool handleBalanceStatusRequest(WiFiClient &client, const String &header);
+static bool handleBalanceTraceRequest(WiFiClient &client, const String &header);
 static bool handleBalanceCalibrateRequest(WiFiClient &client, const String &header);
 static bool handleSensorRequest(WiFiClient &client, const String &header);
 static bool handleMotorMeasurementRequest(WiFiClient &client, const String &header);
@@ -95,6 +96,7 @@ static void serverTask(void *pvParameters) {
             if (handleBalanceArmRequest(client, header)) break;
             if (handleBalanceDisarmRequest(client, header)) break;
             if (handleBalanceCalibrateRequest(client, header)) break;
+            if (handleBalanceTraceRequest(client, header)) break;
             if (handleBalanceStatusRequest(client, header)) break;
             if (handleSensorRequest(client, header)) break;
             if (handleMotorMeasurementRequest(client, header)) break;
@@ -332,6 +334,60 @@ static bool handleBalanceStatusRequest(WiFiClient &client, const String &header)
   jsonResponse += ",\"lastError\":\"" + String(telemetry.lastError) + "\"";
   jsonResponse += "}";
   sendJson(client, "HTTP/1.1 200 OK", jsonResponse);
+  return true;
+}
+
+static bool handleBalanceTraceRequest(WiFiClient &client, const String &header) {
+  if (header.indexOf("GET /balance/trace") < 0) return false;
+
+  BalanceTraceMeta meta;
+  balance_get_trace_meta(meta);
+  client.println("HTTP/1.1 200 OK");
+  client.println("Content-type: application/json");
+  client.println("Connection: close");
+  client.println();
+  client.print("{\"recording\":");
+  client.print(jsonBool(meta.recording));
+  client.print(",\"samplePeriodMs\":");
+  client.print(meta.samplePeriodMs);
+  client.print(",\"capacity\":");
+  client.print(meta.capacity);
+  client.print(",\"count\":");
+  client.print(meta.count);
+  client.print(",\"totalSamples\":");
+  client.print(meta.totalSamples);
+  client.print(",\"samples\":[");
+
+  for (uint16_t index = 0; index < meta.count; index++) {
+    BalanceTraceSample sample;
+    if (!balance_get_trace_sample(index, sample)) {
+      break;
+    }
+    if (index > 0) {
+      client.print(',');
+    }
+    String row = "{";
+    row += "\"atMs\":" + String(sample.atMs);
+    row += ",\"accelPitchDeg\":" + String(sample.accelPitchDeg, 3);
+    row += ",\"pitchDeg\":" + String(sample.pitchDeg, 3);
+    row += ",\"gyroRateDps\":" + String(sample.gyroRateDps, 3);
+    row += ",\"outputRaw\":" + String(sample.outputRaw, 3);
+    row += ",\"outputClamped\":" + String(sample.outputClamped, 3);
+    row += ",\"requestedLeftPwm\":" + String(sample.requestedLeftPwm);
+    row += ",\"requestedRightPwm\":" + String(sample.requestedRightPwm);
+    row += ",\"appliedLeftPwm\":" + String(sample.appliedLeftPwm);
+    row += ",\"appliedRightPwm\":" + String(sample.appliedRightPwm);
+    row += ",\"appliedAtMs\":" + String(sample.appliedAtMs);
+    row += ",\"appliedSequence\":" + String(sample.appliedSequence);
+    row += ",\"encoderLeft\":" + String(sample.encoderLeft);
+    row += ",\"encoderRight\":" + String(sample.encoderRight);
+    row += ",\"armed\":" + String(jsonBool(sample.armed));
+    row += ",\"safetyOk\":" + String(jsonBool(sample.safetyOk));
+    row += ",\"saturated\":" + String(jsonBool(sample.saturated));
+    row += "}";
+    client.print(row);
+  }
+  client.println("]}");
   return true;
 }
 

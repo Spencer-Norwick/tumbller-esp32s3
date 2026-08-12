@@ -30,6 +30,14 @@ BalanceControlConfig g_balanceConfig = {
 portMUX_TYPE g_telemetryMux = portMUX_INITIALIZER_UNLOCKED;
 portMUX_TYPE g_configMux = portMUX_INITIALIZER_UNLOCKED;
 portMUX_TYPE g_armMux = portMUX_INITIALIZER_UNLOCKED;
+portMUX_TYPE g_traceMux = portMUX_INITIALIZER_UNLOCKED;
+BalanceTraceSample g_traceSamples[BALANCE_TRACE_CAPACITY];
+uint16_t g_traceStart = 0;
+uint16_t g_traceCount = 0;
+uint32_t g_traceTotalSamples = 0;
+bool g_traceRecording = false;
+uint8_t g_tracePostStopSamplesRemaining = 0;
+unsigned long g_traceLastSampleMs = 0;
 volatile bool g_calibrationRequested = false;
 bool g_balanceMotorArmed = false;
 unsigned long g_balanceArmStartedAtMs = 0;
@@ -75,6 +83,8 @@ float clampFloat(float value, float minValue, float maxValue);
 int clampPwm(float value);
 void queueMotorStop();
 void emitSerialTelemetry(const BalanceTelemetry &telemetry);
+void startBalanceTrace();
+void recordBalanceTrace(const BalanceTelemetry &telemetry);
 }  // namespace
 
 void balance_task_start() {
@@ -140,6 +150,28 @@ bool balance_request_motor_arm(char *reason, size_t reasonSize, unsigned long ti
 void balance_request_motor_disarm() {
   setArmState(false);
   queueMotorStop();
+}
+
+void balance_get_trace_meta(BalanceTraceMeta &out) {
+  taskENTER_CRITICAL(&g_traceMux);
+  out.count = g_traceCount;
+  out.capacity = BALANCE_TRACE_CAPACITY;
+  out.samplePeriodMs = BALANCE_TRACE_SAMPLE_MS;
+  out.totalSamples = g_traceTotalSamples;
+  out.recording = g_traceRecording;
+  taskEXIT_CRITICAL(&g_traceMux);
+}
+
+bool balance_get_trace_sample(uint16_t chronologicalIndex, BalanceTraceSample &out) {
+  taskENTER_CRITICAL(&g_traceMux);
+  if (chronologicalIndex >= g_traceCount) {
+    taskEXIT_CRITICAL(&g_traceMux);
+    return false;
+  }
+  const uint16_t physicalIndex = (g_traceStart + chronologicalIndex) % BALANCE_TRACE_CAPACITY;
+  out = g_traceSamples[physicalIndex];
+  taskEXIT_CRITICAL(&g_traceMux);
+  return true;
 }
 
 namespace {
@@ -230,6 +262,7 @@ void balanceTask(void *pvParameters) {
     }
 
     applyBalanceMotorOutput(telemetry);
+    recordBalanceTrace(telemetry);
     publishTelemetry(telemetry);
     emitSerialTelemetry(telemetry);
     vTaskDelay(pdMS_TO_TICKS(BALANCE_SENSOR_LOOP_MS));
@@ -300,6 +333,7 @@ void recordArmSample(bool saturated) {
 }
 
 void setArmState(bool armed, unsigned long timeoutMs) {
+  bool traceShouldStart = false;
   taskENTER_CRITICAL(&g_armMux);
   g_balanceMotorArmed = armed;
   if (armed) {
@@ -307,10 +341,82 @@ void setArmState(bool armed, unsigned long timeoutMs) {
     g_balanceArmTimeoutMs = timeoutMs;
     g_balanceRunSampleCount = 0;
     g_balanceMixedSaturationCount = 0;
+    traceShouldStart = true;
   } else {
     g_balanceArmTimeoutMs = 0;
   }
   taskEXIT_CRITICAL(&g_armMux);
+  if (traceShouldStart) {
+    startBalanceTrace();
+  }
+}
+
+void startBalanceTrace() {
+  taskENTER_CRITICAL(&g_traceMux);
+  g_traceStart = 0;
+  g_traceCount = 0;
+  g_traceTotalSamples = 0;
+  g_traceRecording = true;
+  g_tracePostStopSamplesRemaining = 5;
+  g_traceLastSampleMs = 0;
+  taskEXIT_CRITICAL(&g_traceMux);
+}
+
+void recordBalanceTrace(const BalanceTelemetry &telemetry) {
+  const unsigned long nowMs = millis();
+  taskENTER_CRITICAL(&g_traceMux);
+  const bool shouldRecord = g_traceRecording &&
+                            (g_traceLastSampleMs == 0 || nowMs - g_traceLastSampleMs >= BALANCE_TRACE_SAMPLE_MS);
+  taskEXIT_CRITICAL(&g_traceMux);
+  if (!shouldRecord) {
+    return;
+  }
+
+  MotorAppliedTelemetry applied;
+  motor_get_applied_status(applied);
+  unsigned long encoderLeft = 0;
+  unsigned long encoderRight = 0;
+  motor_snapshot_encoder_counts(encoderLeft, encoderRight);
+
+  BalanceTraceSample sample;
+  sample.atMs = nowMs;
+  sample.accelPitchDeg = telemetry.accelPitchDeg;
+  sample.pitchDeg = telemetry.pitchDeg;
+  sample.gyroRateDps = telemetry.gyroRateDps;
+  sample.outputRaw = telemetry.balanceOutputRaw;
+  sample.outputClamped = telemetry.balanceMixedOutputClamped;
+  sample.requestedLeftPwm = telemetry.balanceMotorOutputArmed ? telemetry.balanceLeftPwm : 0;
+  sample.requestedRightPwm = telemetry.balanceMotorOutputArmed ? telemetry.balanceRightPwm : 0;
+  sample.appliedLeftPwm = applied.leftPwm;
+  sample.appliedRightPwm = applied.rightPwm;
+  sample.appliedAtMs = applied.updatedAtMs;
+  sample.appliedSequence = applied.sequence;
+  sample.encoderLeft = encoderLeft;
+  sample.encoderRight = encoderRight;
+  sample.armed = telemetry.balanceMotorOutputArmed;
+  sample.safetyOk = telemetry.balanceControlSafetyOk;
+  sample.saturated = telemetry.balanceMixedOutputSaturated;
+
+  taskENTER_CRITICAL(&g_traceMux);
+  uint16_t writeIndex = (g_traceStart + g_traceCount) % BALANCE_TRACE_CAPACITY;
+  if (g_traceCount == BALANCE_TRACE_CAPACITY) {
+    writeIndex = g_traceStart;
+    g_traceStart = (g_traceStart + 1) % BALANCE_TRACE_CAPACITY;
+  } else {
+    g_traceCount++;
+  }
+  g_traceSamples[writeIndex] = sample;
+  g_traceTotalSamples++;
+  g_traceLastSampleMs = nowMs;
+  if (!telemetry.balanceMotorOutputArmed) {
+    if (g_tracePostStopSamplesRemaining > 0) {
+      g_tracePostStopSamplesRemaining--;
+    }
+    if (g_tracePostStopSamplesRemaining == 0) {
+      g_traceRecording = false;
+    }
+  }
+  taskEXIT_CRITICAL(&g_traceMux);
 }
 
 void setError(BalanceTelemetry &telemetry, const char *message) {
