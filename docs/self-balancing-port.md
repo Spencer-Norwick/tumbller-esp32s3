@@ -79,6 +79,7 @@ The first controller milestone computes a proposed balance output without applyi
 - Balance motor output is available only through explicit runtime arming. The board starts disarmed after reset.
 - `/balance/arm` requires calibration, healthy sensor reads, pitch inside the configured safe window, and `outputLimit <= 90 pwm`. `/balance/arm?ms=...` adds an optional bounded runtime, clamped by `BALANCE_ARM_MAX_RUNTIME_MS`, for short physical test runs.
 - `/balance/disarm` clears the runtime arm state and queues a motor stop.
+- Motor commands use a one-element latest-value mailbox. Each balance update overwrites any unconsumed prior command so the motor task never executes a FIFO backlog of stale corrections; stop commands use the same overwrite path.
 - `/balance/config` includes `motorSign` so first-motion polarity can be flipped without rebuilding.
 - Manual `/motor/*` diagnostics remain separate from balance telemetry.
 - Encoders are initialized by the motor task and exposed at `/encoder/status`.

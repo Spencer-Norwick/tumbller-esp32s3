@@ -614,7 +614,7 @@ static bool handleMotorRequest(WiFiClient &client, const String &header) {
       return true;
     }
 #endif
-    xQueueSend(g_motorQueue, &msg, 0);
+    motor_submit_command(msg);
   }
 
   client.println();

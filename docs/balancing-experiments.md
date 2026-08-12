@@ -510,3 +510,19 @@ Result: The run completed `694` samples with both wheels active, zero mixed-outp
 Takeaway: The corrected speed feedback now has the intended damping effect on this port in both directions. The previous tether run's positive-feedback behavior is fixed, and the change is ready for a controlled wheels-down tether test.
 
 Next action: Return the robot wheels-down under the slack tether, calibrate upright, and run one `10000 ms` test with `Kp=10.0`, `Ki=0.0`, `Kd=0.35`, output limit `90 pwm`, max angle `45 deg`, speed mix enabled, and `speedScale=0.05`.
+
+## 2026-08-12: Operator-Observed Delayed Motor Response
+
+Goal: Explain why wheels appeared to respond roughly one second after the chassis tilt despite a measured balance-loop period near `7 ms`.
+
+Setup: Corrected speed-mix firmware during the five-second wheels-up validation. The operator deliberately tilted in both directions and reported that the wheels kicked noticeably after the tilt, sometimes after the chassis had already crossed toward the other side.
+
+Finding: The balance task publishes approximately every `7 ms`, while the motor task can consume one queue entry roughly every `10 ms` because it waits for a message and then delays `5 ms`. The shared motor queue held eight FIFO entries. This lets production outrun consumption, stores stale balance commands, and rejects newer commands when full. The same full queue could also reject a stop request. PID and mixer telemetry can therefore be current while the motor driver is applying an older command.
+
+Change: Convert the motor command queue to a one-element latest-value mailbox and route balance, manual, and stop submissions through `xQueueOverwrite`. The motor task now receives the newest available command instead of draining a historical FIFO backlog.
+
+Validation: `./scripts/check.sh` passed, the firmware was uploaded, and a `10000 ms` wheels-up reversal test exercised both directions. Telemetry followed the commanded reversals, both encoders remained active, and automatic angle-limit disarm worked. The operator still perceived substantial physical delay between tilt and visible wheel response.
+
+Takeaway: The mailbox change removes a real stale-command and rejected-stop failure mode, but it did not account for all of the observed lag. Do not resume blind floor tuning yet.
+
+Next action: Add an automated wheels-up motor characterization that measures each side and direction across PWM, including the first encoder response and the motor-command application time. Use those measurements to separate electrical/mechanical deadband from software latency before changing controller gains.

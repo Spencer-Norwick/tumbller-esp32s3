@@ -647,7 +647,7 @@ void applyBalanceMotorOutput(BalanceTelemetry &telemetry) {
   msg.timeoutMs = BALANCE_DRIVE_COMMAND_TIMEOUT_MS;
   msg.leftPwm = pwm;
   msg.rightPwm = pwm;
-  telemetry.balanceDriveCommandSent = xQueueSend(g_motorQueue, &msg, 0) == pdPASS;
+  telemetry.balanceDriveCommandSent = motor_submit_command(msg);
 #endif
 }
 
@@ -687,7 +687,7 @@ void queueMotorStop() {
   MotorCommandMsg msg{};
   msg.cmd = MotorCommand::Stop;
   msg.timeoutMs = 0;
-  xQueueSend(g_motorQueue, &msg, 0);
+  motor_submit_command(msg);
 }
 
 void emitSerialTelemetry(const BalanceTelemetry &telemetry) {

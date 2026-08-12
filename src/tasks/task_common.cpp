@@ -31,7 +31,9 @@ void i2c_unlock() {
 
 void task_common_init() {
   if (!g_motorQueue) {
-    g_motorQueue = xQueueCreate(8, sizeof(MotorCommandMsg));
+    // Motor control is a latest-value stream, not a FIFO job queue. A backlog
+    // makes the task execute stale balance commands after the chassis reverses.
+    g_motorQueue = xQueueCreate(1, sizeof(MotorCommandMsg));
   }
   if (!g_i2cMutex) {
     g_i2cMutex = xSemaphoreCreateMutex();
@@ -54,4 +56,11 @@ void task_common_init() {
 #ifdef USE_SERIAL
   Serial.println("SHT3x initialized");
 #endif
+}
+
+bool motor_submit_command(const MotorCommandMsg &msg) {
+  if (!g_motorQueue) {
+    return false;
+  }
+  return xQueueOverwrite(g_motorQueue, &msg) == pdPASS;
 }

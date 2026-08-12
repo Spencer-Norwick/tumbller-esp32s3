@@ -61,5 +61,6 @@ constexpr unsigned long MOTOR_HOLD_REFRESH_TIME = 900; // ms
 
 // Initialize shared queue and state
 void task_common_init();
+bool motor_submit_command(const MotorCommandMsg &msg);
 bool i2c_lock(TickType_t timeoutTicks);
 void i2c_unlock();
