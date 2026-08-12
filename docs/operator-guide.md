@@ -111,8 +111,8 @@ Use this only after both wheels respond during the 45-PWM sign check and the rob
 ## Wheels-Up Speed Mix Check
 
 1. Complete the speed sign check first.
-2. Keep the robot wheels-up and near upright, then set `/balance/config?limit=45&speedMix=1&speedScale=0.10`.
-3. Arm with a timeout, for example `/balance/arm?ms=1500`, and use small tilts only; watch `balanceMixedOutputClamped`, `speedLoopOutput`, `speedLoopMixScale`, `speedLoopResetReason`, and `balanceMixedOutputSaturationRatio`.
+2. Keep the robot wheels-up and near upright, then set `/balance/config?kp=10&kd=0.35&limit=90&maxAngle=45&speedMix=1&speedScale=0.05`.
+3. Arm for `5000 ms` and tilt deliberately in both directions; verify that the mixed PWM magnitude is lower than the angle-only PWM once wheel speed builds. Watch `balanceMixedOutputClamped`, `speedLoopOutput`, `speedLoopMixScale`, `speedLoopResetReason`, and `balanceMixedOutputSaturationRatio`.
 4. Disarm immediately if pitch approaches the safe angle window or the mixed output saturates repeatedly.
 
 ## Overhead Tether Balance Trials

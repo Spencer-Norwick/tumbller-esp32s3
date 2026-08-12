@@ -6,6 +6,7 @@
 #include <freertos/task.h>
 
 #include "../config.hpp"
+#include "../../include/control_mix.hpp"
 #include "../drivers/KalmanPitch.hpp"
 #include "motor_task.hpp"
 #include "task_common.hpp"
@@ -512,8 +513,9 @@ void computeSpeedLoopPreview(BalanceTelemetry &telemetry) {
   }
 
   const float commandForDirection = telemetry.speedLoopMixEnabled
-                                        ? telemetry.balanceOutputClamped -
-                                              (telemetry.speedLoopOutput * telemetry.speedLoopMixScale)
+                                        ? control_mix::applySpeedCorrection(
+                                              telemetry.balanceOutputClamped, telemetry.speedLoopOutput,
+                                              telemetry.speedLoopMixScale)
                                         : telemetry.balanceOutputClamped;
   telemetry.speedLoopSignedCommand = clampFloat(commandForDirection, -telemetry.balanceOutputLimit,
                                                 telemetry.balanceOutputLimit) *
@@ -558,8 +560,8 @@ void computeSpeedLoopPreview(BalanceTelemetry &telemetry) {
                                             -BALANCE_SPEED_INTEGRAL_LIMIT, BALANCE_SPEED_INTEGRAL_LIMIT);
   const float proposedOutput = (-BALANCE_SPEED_KP * telemetry.speedLoopFilter) -
                                (BALANCE_SPEED_KI * proposedIntegral);
-  const float proposedMixedOutput = telemetry.balanceOutputClamped -
-                                    (proposedOutput * telemetry.speedLoopMixScale);
+  const float proposedMixedOutput = control_mix::applySpeedCorrection(
+      telemetry.balanceOutputClamped, proposedOutput, telemetry.speedLoopMixScale);
   const bool mixWouldSaturate = telemetry.speedLoopMixEnabled &&
                                 (proposedMixedOutput > telemetry.balanceOutputLimit ||
                                  proposedMixedOutput < -telemetry.balanceOutputLimit);
@@ -575,7 +577,8 @@ void computeSpeedLoopPreview(BalanceTelemetry &telemetry) {
 void computeSpeedMixedOutput(BalanceTelemetry &telemetry) {
   float mixedOutput = telemetry.balanceOutputClamped;
   if (telemetry.balanceControlSafetyOk && telemetry.speedLoopMixEnabled && telemetry.speedLoopReady) {
-    mixedOutput = telemetry.balanceOutputClamped - (telemetry.speedLoopOutput * telemetry.speedLoopMixScale);
+    mixedOutput = control_mix::applySpeedCorrection(
+        telemetry.balanceOutputClamped, telemetry.speedLoopOutput, telemetry.speedLoopMixScale);
   }
 
   telemetry.balanceMixedOutputRaw = mixedOutput;

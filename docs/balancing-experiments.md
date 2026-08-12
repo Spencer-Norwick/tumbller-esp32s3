@@ -482,3 +482,31 @@ Result: The first run completed `695` samples with pitch between roughly `-0.2` 
 Takeaway: The controller produced a damped correction sequence on the floor, but tether geometry prevented a valid claim of self-balancing. The five-second window was also too short to distinguish sustained balance from a tether catch confidently.
 
 Next action: Increase the maximum timed arm and dashboard tether profile to `10000 ms`, lengthen the tether so it remains slack through normal motion, and repeat the wheels-down angle-only run without counting any trial where the tether carries or catches the chassis.
+
+## 2026-08-12: Wide-Window Tuning Exposed Speed-Mix Feedback Sign
+
+Goal: Keep the controller active long enough to make the wheels-down failure visible, then determine whether stronger angle gains or the existing low-scale speed mixer reduce the tether-to-tether oscillation.
+
+Setup: The tether was lengthened and runtime config used a `45 deg` angle window, `90 pwm` limit, and `10000 ms` timed arm. The first wide-window run retained `Kp=5.0`, `Kd=0.15`, and speed mix disabled. A second run used `Kp=10.0`, `Kd=0.35`, and speed mix disabled. A third used the stronger gains plus `speedMix=1` and `speedScale=0.05`.
+
+Change: No firmware behavior changed before these runs. Runtime angle and gain settings were adjusted within existing bounds so the physical failure mode could be observed instead of being hidden by an early cutoff.
+
+Result: With the original gains, the robot fell into one tether side, rolled through upright, and fell into the opposite side. Telemetry swung from approximately `-33` to `+37 deg` while output saturated at `-90` and `+90 pwm`. Doubling `Kp` moved the wheels earlier but still produced a large overshoot to approximately `+39 deg`. Enabling the existing `0.05` speed mix made the response worse: at `-3.4 deg` it increased output magnitude from `-24.6` to `-28.5 pwm`, and at `+6.8 deg` it increased `+75.4` to `+80.4 pwm`. The run reached a mixed-output saturation ratio of `0.606` and fell into the tether in about `2.8 s`.
+
+Takeaway: The wide angle window was useful because it exposed the actual controller behavior. The angle-only loop is underdamped, but the current ESP32 port's speed mixer also reinforces measured wheel motion instead of reducing same-direction drive. The original Elegoo expression uses the same textual subtraction, but the mounted-axis and motor-direction conventions of this port require the effective feedback contribution to be reversed.
+
+Next action: Change the port mixer from `balance - speedOutput * scale` to `balance + speedOutput * scale`, add a host regression test proving positive wheel-speed correction reduces positive drive and vice versa, then validate the reversed contribution during a visible five-second wheels-up run before returning to the tethered floor test.
+
+## 2026-08-12: Corrected Speed-Mix Sign Wheels-Up Validation
+
+Goal: Prove that the port-specific speed-mix sign change reduces same-direction wheel drive before returning the changed feedback loop to the floor.
+
+Setup: Firmware changed the effective mixer to `balanceOutput + speedLoopOutput * speedScale` and added a host regression test for positive and negative drive reduction. The robot was held wheels-up, calibrated, and configured with `Kp=10.0`, `Ki=0.0`, `Kd=0.35`, output limit `90 pwm`, max angle `45 deg`, speed mix enabled, and `speedScale=0.05`. The arm duration was `5000 ms`.
+
+Change: The operator tilted through both directions during one timed wheels-up run while telemetry compared angle-only and mixed output.
+
+Result: The run completed `694` samples with both wheels active, zero mixed-output saturation, and zero sensor failures. The corrected contribution consistently reduced same-direction command magnitude after wheel speed developed: `-90.0` became `-85.5 pwm`, `+90.0` became `+83.8` and `+82.6 pwm`, another `-90.0` became `-83.1 pwm`, and `-64.3` became `-57.9 pwm`. Direction changes reset speed-loop state as designed, and timed disarm completed normally.
+
+Takeaway: The corrected speed feedback now has the intended damping effect on this port in both directions. The previous tether run's positive-feedback behavior is fixed, and the change is ready for a controlled wheels-down tether test.
+
+Next action: Return the robot wheels-down under the slack tether, calibrate upright, and run one `10000 ms` test with `Kp=10.0`, `Ki=0.0`, `Kd=0.35`, output limit `90 pwm`, max angle `45 deg`, speed mix enabled, and `speedScale=0.05`.

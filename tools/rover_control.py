@@ -1147,7 +1147,7 @@ HTML = """<!doctype html>
 
     const runtimeProfiles = {
       tether: { kp: "5.0", ki: "0.0", kd: "0.15", limit: "90", setpoint: "0.0", maxAngle: "22", motorSign: "1", speedMix: "0", speedScale: "0.05", armMs: "10000" },
-      speedMix: { kp: "5.0", ki: "0.0", kd: "0.15", limit: "45", setpoint: "0.0", maxAngle: "22", motorSign: "1", speedMix: "1", speedScale: "0.05", armMs: "1500" },
+      speedMix: { kp: "10.0", ki: "0.0", kd: "0.35", limit: "90", setpoint: "0.0", maxAngle: "45", motorSign: "1", speedMix: "1", speedScale: "0.05", armMs: "10000" },
     };
 
     async function applyRuntimeProfile(name) {
