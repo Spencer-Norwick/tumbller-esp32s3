@@ -8,7 +8,7 @@ Last hardware-validated firmware commit: pending motor-characterization incremen
 
 ## Current Objective
 
-Use the measured motor startup threshold to make the inner angle loop respond near upright, validate that profile wheels-up, then return to the slack-tether floor test.
+Finish validating the measured responsive inner angle profile, including correct saturation telemetry and the operator's physical promptness assessment, then return to the slack-tether floor test.
 
 ## Verified State
 
@@ -21,6 +21,7 @@ Use the measured motor startup threshold to make the inner angle loop respond ne
 - Corrected speed-loop mixing reduces same-direction drive instead of reinforcing it, verified in both directions during a five-second wheels-up run.
 - Motor commands now use a one-element latest-value mailbox, eliminating FIFO command backlog and full-queue stop rejection. A ten-second wheels-up reversal test confirmed live command changes and automatic disarm, but the operator still observed substantial physical response delay.
 - Automated wheels-up characterization measured `0-6 ms` command-application lag and a reliable startup threshold of approximately `40 pwm` in all four side/direction cases. The prior `Kp=10` profile stayed below reliable motor effort until about `4 deg` of proportional error.
+- A `Kp=35`, `Kd=0.5` wheels-up run commanded `+45 pwm` at `+1.13 deg`, reversed in both directions, completed 1390 samples, and timed out safely. Motion reached roughly `+/-25 deg`, causing substantial true output clamping; the physical promptness assessment is pending.
 - The local dashboard provides runtime tuning, timed-arm profiles, telemetry traces, and immediate disarm/stop controls.
 
 Detailed evidence is in `docs/balancing-experiments.md` and the operating procedure is in `docs/operator-guide.md`.
@@ -54,6 +55,7 @@ Detailed evidence is in `docs/balancing-experiments.md` and the operating proced
 
 - Stable wheels-down self-balancing has not yet been demonstrated.
 - The current low-gain balance profiles command below the measured reliable motor threshold near upright, producing late visible correction.
+- Saturation telemetry in the flashed firmware misses raw angle-loop clamping; a host-tested correction is pending build/upload.
 - Encoder direction is inferred from output sign, so it cannot independently detect wheel reversal or external wheel motion.
 - Hardware-independent mixer and characterization logic have host regression tests; there are still no on-device PlatformIO unit tests.
 
@@ -67,6 +69,6 @@ Detailed evidence is in `docs/balancing-experiments.md` and the operating proced
 
 ## Next Action
 
-1. Add a responsive angle-only runtime profile using `Kp=35`, `Ki=0`, `Kd=0.5`, limit `90 pwm`, max angle `45 deg`, and speed mixing disabled.
-2. Validate small `+/-5 deg` wheels-up reversals; correction should begin near `1.15 deg` instead of waiting for roughly `4 deg`.
-3. If direction and response are prompt without violent reversal, run the same profile wheels-down under the slack tether for `10000 ms`.
+1. Confirm whether the `Kp=35`, `Kd=0.5` wheels-up run felt prompt and correct to the operator.
+2. Build/upload the saturation telemetry correction and keep the measured responsive profile in the dashboard.
+3. If the physical response was prompt without violent reversal, run the same profile wheels-down under the slack tether for `10000 ms`.

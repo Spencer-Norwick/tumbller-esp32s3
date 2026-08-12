@@ -668,20 +668,20 @@ HTML = """<!doctype html>
             </div>
           </div>
           <div class="pid-grid" style="margin-top: 10px;">
-            <label class="pid-row"><span>Kp</span><input id="gainKp" inputmode="decimal" value="5.0"></label>
+            <label class="pid-row"><span>Kp</span><input id="gainKp" inputmode="decimal" value="35.0"></label>
             <label class="pid-row"><span>Ki</span><input id="gainKi" inputmode="decimal" value="0.0"></label>
-            <label class="pid-row"><span>Kd</span><input id="gainKd" inputmode="decimal" value="0.15"></label>
-            <label class="pid-row"><span>Limit</span><input id="gainLimit" inputmode="decimal" value="120"></label>
+            <label class="pid-row"><span>Kd</span><input id="gainKd" inputmode="decimal" value="0.5"></label>
+            <label class="pid-row"><span>Limit</span><input id="gainLimit" inputmode="decimal" value="90"></label>
             <label class="pid-row"><span>Setpoint</span><input id="gainSetpoint" inputmode="decimal" value="0.0"></label>
-            <label class="pid-row"><span>Max angle</span><input id="gainMaxAngle" inputmode="decimal" value="22"></label>
+            <label class="pid-row"><span>Max angle</span><input id="gainMaxAngle" inputmode="decimal" value="45"></label>
             <label class="pid-row"><span>Motor sign</span><select id="gainMotorSign"><option value="1">+1</option><option value="-1">-1</option></select></label>
             <label class="pid-row"><span>Speed mix</span><select id="gainSpeedMix"><option value="0">off</option><option value="1">on</option></select></label>
             <label class="pid-row"><span>Mix scale</span><input id="gainSpeedScale" inputmode="decimal" value="0.05"></label>
             <label class="pid-row"><span>Arm ms</span><input id="armDuration" inputmode="numeric" value="10000"></label>
           </div>
           <div class="row" style="margin-top: 10px;">
-            <button id="profileTether">Angle-only Tether</button>
-            <button id="profileSpeedMix">Low Speed Mix</button>
+            <button id="profileTether">Responsive Angle (Measured)</button>
+            <button id="profileSpeedMix">Low Speed Mix (Later)</button>
           </div>
           <div class="row" style="margin-top: 10px;">
             <button id="applyGains" class="toggle">Apply Runtime Config</button>
@@ -700,7 +700,7 @@ HTML = """<!doctype html>
           <div class="checklist">
             <label class="check"><input type="checkbox"><span>Tether catches the robot before the body hits the floor; wheels still touch freely.</span></label>
             <label class="check"><input type="checkbox"><span>Calibrate while stationary, upright, and slack on the tether.</span></label>
-            <label class="check"><input type="checkbox"><span>Start with Angle-only Tether, speed mix off, Ki zero, 10000 ms arm.</span></label>
+            <label class="check"><input type="checkbox"><span>Start with Responsive Angle (Measured), speed mix off, Ki zero, 10000 ms arm.</span></label>
             <label class="check"><input type="checkbox"><span>Watch physical behavior first: correct direction, underpowered, oscillating, or saturating.</span></label>
             <label class="check"><input type="checkbox"><span>Only enable Low Speed Mix after angle-only correction pushes the right way.</span></label>
           </div>
@@ -1146,8 +1146,8 @@ HTML = """<!doctype html>
     }
 
     const runtimeProfiles = {
-      tether: { kp: "5.0", ki: "0.0", kd: "0.15", limit: "90", setpoint: "0.0", maxAngle: "22", motorSign: "1", speedMix: "0", speedScale: "0.05", armMs: "10000" },
-      speedMix: { kp: "10.0", ki: "0.0", kd: "0.35", limit: "90", setpoint: "0.0", maxAngle: "45", motorSign: "1", speedMix: "1", speedScale: "0.05", armMs: "10000" },
+      tether: { kp: "35.0", ki: "0.0", kd: "0.5", limit: "90", setpoint: "0.0", maxAngle: "45", motorSign: "1", speedMix: "0", speedScale: "0.05", armMs: "10000" },
+      speedMix: { kp: "35.0", ki: "0.0", kd: "0.5", limit: "90", setpoint: "0.0", maxAngle: "45", motorSign: "1", speedMix: "1", speedScale: "0.05", armMs: "10000" },
     };
 
     async function applyRuntimeProfile(name) {

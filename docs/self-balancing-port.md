@@ -93,6 +93,7 @@ The first controller milestone computes a proposed balance output without applyi
 - Speed-loop preview is observability only unless explicitly enabled at runtime with `/balance/config?speedMix=1&speedScale=...`. When enabled, this port uses `balanceOutputClamped + speedLoopOutput * speedLoopMixScale`, clamped to the active balance output limit, so the measured-speed term reduces same-direction wheel drive. All existing arm and angle safety gates remain active.
 - Speed-loop dynamic state resets while disarmed, while unsafe, when encoder totals reset, near zero command, or when the inferred command direction changes. Runtime telemetry reports `speedLoopResetCount` and `speedLoopResetReason` so stale integral state is visible during test runs.
 - Physical test-run telemetry reports arm timing, sample count, mixed-output saturation count, and saturation ratio so tuning decisions can be based on bounded runs rather than open-ended observation.
+- Saturation telemetry counts either angle-loop raw output or the post-speed-mix output exceeding the active limit; clamping the angle term before mixing no longer hides angle-only saturation.
 
 ## Milestone Checklist
 

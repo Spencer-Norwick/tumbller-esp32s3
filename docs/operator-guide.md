@@ -136,11 +136,11 @@ Start with the dashboard, not raw curl, so the same screen controls the arm time
 
 1. Rig the tether so it catches the body before a fall, but leaves the wheels touching the floor freely. Keep the tether slack at upright.
 2. Open the dashboard, press `DISARM / STOP`, then `Calibrate Gyro` while the robot is stationary and upright.
-3. Press `Angle-only Tether`. This applies `Kp=5.0`, `Ki=0.0`, `Kd=0.15`, `limit=90`, `maxAngle=22`, `speedMix=off`, and `Arm ms=10000`. This profile follows the successful wheels-up authority test; use it only with the overhead tether rigged.
+3. Press `Responsive Angle (Measured)`. This applies `Kp=35.0`, `Ki=0.0`, `Kd=0.5`, `limit=90`, `maxAngle=45`, `speedMix=off`, and `Arm ms=10000`. The proportional term reaches the measured `40 pwm` reliable-start threshold at about `1.15 deg` of error. Use it only after a prompt, correct-direction wheels-up reversal check and with the overhead tether rigged.
 4. Press `Arm Timed` and watch the robot, not just the numbers. Classify the run as: correct-direction catch, wrong-direction fall, underpowered fall, oscillation, or saturation.
 5. After each run, check `Run saturation`, `Mixed output`, `Safety reason`, `Arm timer`, and `Trace safety samples`.
 6. Tune angle loop first. If it falls the correct direction but weakly, increase `Kp` or `limit` slightly. If it snaps/oscillates, lower `Kp` or raise `Kd` slightly. Keep `Ki=0` for these trials.
-7. Use `Low Speed Mix` only after angle-only behavior pushes the right way. Keep `speedScale=0.05` until saturation is rare and the physical behavior is understandable.
+7. Use `Low Speed Mix (Later)` only after angle-only behavior pushes the right way. Keep `speedScale=0.05` until saturation is rare and the physical behavior is understandable.
 
 Stop criteria for a trial: wrong motor direction, repeated saturation, safety blocked, violent oscillation, tether carrying most of the weight, or uncertainty about what happened.
 

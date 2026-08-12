@@ -538,3 +538,15 @@ Result: Applied-command lag was `0-6 ms` across all `28` cases, ruling out a hum
 Takeaway: The visible delay is dominated by controller effort remaining inside the motor's roughly `40 pwm` reliable-start threshold, not by the firmware command path. With `Kp=10`, the proportional term alone does not reach reliable actuation until roughly `4 deg` of error. That is enough falling distance to look and behave late.
 
 Next action: Add a measured responsive angle-only profile with `Kp=35`, `Ki=0`, `Kd=0.5`, output limit `90 pwm`, max angle `45 deg`, and speed mixing disabled. At that gain, about `1.15 deg` of proportional error reaches the measured reliable-start threshold. Validate it wheels-up with small `+/-5 deg` reversals before any tethered floor run.
+
+## 2026-08-12: Measured Responsive Profile Wheels-Up Run
+
+Goal: Verify that the angle controller crosses the measured `40 pwm` reliable-start threshold close to upright instead of waiting for roughly `4 deg` of error.
+
+Setup: Wheels-up, stationary gyro calibration complete, `Kp=35`, `Ki=0`, `Kd=0.5`, output limit `90 pwm`, max angle `45 deg`, speed mixing disabled, and a `10000 ms` timed arm. The operator rocked the chassis through repeated reversals while sampled telemetry recorded pitch, gyro rate, PWM, arm state, and run sample count.
+
+Result: Firmware response was immediate and continuous through the run. At `+1.130 deg` with `+11.552 dps`, the controller commanded `+45 pwm`, above the measured reliable-start threshold. At `-2.276 deg` it commanded `-80 pwm`. The hand motion reached approximately `-25.9` to `+24.2 deg`, so the controller spent much of the run at the `+/-90 pwm` clamp. The run completed `1390` control samples and timed disarm worked. The operator's physical promptness assessment is still required before moving wheels-down.
+
+Telemetry issue found: The reported saturation flag remained false even when the raw angle output exceeded the limit, because saturation was evaluated after the angle term had already been clamped. Update the saturation calculation to count either raw angle output or post-mix output exceeding the active limit, and retain a host regression test for both signs.
+
+Next action: Confirm the operator-observed response was prompt and correct. Build/upload the saturation fix, then repeat a smaller-amplitude wheels-up run if needed; otherwise use the responsive angle-only profile for the next slack-tether floor trial.

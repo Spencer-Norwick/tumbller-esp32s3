@@ -583,7 +583,8 @@ void computeSpeedMixedOutput(BalanceTelemetry &telemetry) {
 
   telemetry.balanceMixedOutputRaw = mixedOutput;
   telemetry.balanceMixedOutputSaturated =
-      mixedOutput > telemetry.balanceOutputLimit || mixedOutput < -telemetry.balanceOutputLimit;
+      control_mix::isSaturated(telemetry.balanceOutputRaw, telemetry.balanceOutputLimit) ||
+      control_mix::isSaturated(mixedOutput, telemetry.balanceOutputLimit);
   telemetry.balanceMixedOutputClamped = clampFloat(mixedOutput, -telemetry.balanceOutputLimit, telemetry.balanceOutputLimit);
   if (!telemetry.balanceControlSafetyOk) {
     telemetry.balanceMixedOutputSaturated = false;
