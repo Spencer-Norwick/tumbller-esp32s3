@@ -468,3 +468,17 @@ Result: The timed run completed `698` control samples with zero sensor failures.
 Takeaway: The 90-PWM, five-second envelope is the first resumed test that produced clear physical evidence. Motor polarity, bidirectional correction, sensor health, encoder activity, timed shutdown, and angle gating are all adequate to advance from wheels-up observation to the first overhead-tether wheels-down attempt.
 
 Next action: Rig a slack overhead tether with both wheels touching freely, calibrate upright, and run one `5000 ms` angle-only trial at `Kp=5.0`, `Ki=0.0`, `Kd=0.15`, output limit `90 pwm`, max angle `22 deg`, and speed mixing disabled.
+
+## 2026-08-12: First Wheels-Down Run Inconclusive Due to Tether Support
+
+Goal: Attempt the first wheels-down balance run using the validated angle-only controller and overhead tether.
+
+Setup: Both wheels touched the floor and the robot was held upright for calibration. Runtime config was `Kp=5.0`, `Ki=0.0`, `Kd=0.15`, output limit `90 pwm`, max angle `22 deg`, `motorSign=+1`, and speed mix disabled. The arm duration was `5000 ms`.
+
+Change: Two wheels-down runs were attempted. The first remained near upright with no encoder movement. The tether was then lengthened and a second run included a small nudge after release.
+
+Result: The first run completed `695` samples with pitch between roughly `-0.2` and `+1.6 deg`, PWM below `8`, and zero encoder counts; the operator confirmed afterward that the tether was not fully slack, so this was external support rather than balancing evidence. In the second run, pitch moved through approximately `+9.8`, `-7.5`, `+4.2`, `+2.6`, `-1.1`, and `-2.0 deg`; encoder totals reached left `83` and right `102`; safety remained `ok`; and the timed stop completed normally. The operator believed the tether still caught the robot during the second run, so it is also inconclusive as an unassisted balance demonstration.
+
+Takeaway: The controller produced a damped correction sequence on the floor, but tether geometry prevented a valid claim of self-balancing. The five-second window was also too short to distinguish sustained balance from a tether catch confidently.
+
+Next action: Increase the maximum timed arm and dashboard tether profile to `10000 ms`, lengthen the tether so it remains slack through normal motion, and repeat the wheels-down angle-only run without counting any trial where the tether carries or catches the chassis.
