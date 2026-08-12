@@ -29,6 +29,8 @@ static bool handleBalanceDisarmRequest(WiFiClient &client, const String &header)
 static bool handleBalanceStatusRequest(WiFiClient &client, const String &header);
 static bool handleBalanceCalibrateRequest(WiFiClient &client, const String &header);
 static bool handleSensorRequest(WiFiClient &client, const String &header);
+static bool handleMotorMeasurementRequest(WiFiClient &client, const String &header);
+static bool handleMotorSignedTestRequest(WiFiClient &client, const String &header);
 static bool handleMotorRequest(WiFiClient &client, const String &header);
 static bool queryFloatParam(const String &header, const char *name, float &value);
 static bool queryFloatParamForPath(const String &header, const char *path, const char *name, float &value);
@@ -95,6 +97,8 @@ static void serverTask(void *pvParameters) {
             if (handleBalanceCalibrateRequest(client, header)) break;
             if (handleBalanceStatusRequest(client, header)) break;
             if (handleSensorRequest(client, header)) break;
+            if (handleMotorMeasurementRequest(client, header)) break;
+            if (handleMotorSignedTestRequest(client, header)) break;
             if (handleMotorRequest(client, header)) break;
 
             // Unknown route
@@ -519,6 +523,93 @@ static bool handleSensorRequest(WiFiClient &client, const String &header) {
 
   String jsonResponse = "{\"temperature\": " + String(aTemperature) + ", \"humidity\": " + String(aHumidity) + "}";
   sendJson(client, "HTTP/1.1 200 OK", jsonResponse);
+  return true;
+}
+
+static bool handleMotorMeasurementRequest(WiFiClient &client, const String &header) {
+  if (header.indexOf("GET /motor/measurement") < 0) return false;
+
+  MotorAppliedTelemetry applied;
+  motor_get_applied_status(applied);
+  unsigned long leftCount = 0;
+  unsigned long rightCount = 0;
+  motor_snapshot_encoder_counts(leftCount, rightCount);
+
+  String jsonResponse = "{";
+  jsonResponse += "\"servedAtMs\":" + String(millis());
+  jsonResponse += ",\"initialized\":" + String(jsonBool(applied.initialized));
+  jsonResponse += ",\"appliedAtMs\":" + String(applied.updatedAtMs);
+  jsonResponse += ",\"sequence\":" + String(applied.sequence);
+  jsonResponse += ",\"leftPwm\":" + String(applied.leftPwm);
+  jsonResponse += ",\"rightPwm\":" + String(applied.rightPwm);
+  jsonResponse += ",\"timeoutMs\":" + String(applied.timeoutMs);
+  jsonResponse += ",\"running\":" + String(jsonBool(applied.running));
+  jsonResponse += ",\"encoderTotalLeft\":" + String(leftCount);
+  jsonResponse += ",\"encoderTotalRight\":" + String(rightCount);
+  jsonResponse += "}";
+  sendJson(client, "HTTP/1.1 200 OK", jsonResponse);
+  return true;
+}
+
+static bool handleMotorSignedTestRequest(WiFiClient &client, const String &header) {
+  static constexpr const char *PATH = "GET /motor/test/signed";
+  if (header.indexOf(PATH) < 0) return false;
+
+  float leftValue = 0.0f;
+  float rightValue = 0.0f;
+  float durationValue = 0.0f;
+  const bool hasLeft = queryFloatParamForPath(header, PATH, "left", leftValue);
+  const bool hasRight = queryFloatParamForPath(header, PATH, "right", rightValue);
+  const bool hasDuration = queryFloatParamForPath(header, PATH, "ms", durationValue);
+  if (!hasLeft || !hasRight || !hasDuration) {
+    sendJson(client, "HTTP/1.1 400 Bad Request", "{\"error\":\"left, right, and ms are required\"}");
+    return true;
+  }
+
+  const int leftPwm = static_cast<int>(leftValue);
+  const int rightPwm = static_cast<int>(rightValue);
+  const unsigned long durationMs = static_cast<unsigned long>(durationValue);
+  if (leftPwm < -MOTOR_CHARACTERIZATION_MAX_PWM || leftPwm > MOTOR_CHARACTERIZATION_MAX_PWM ||
+      rightPwm < -MOTOR_CHARACTERIZATION_MAX_PWM || rightPwm > MOTOR_CHARACTERIZATION_MAX_PWM ||
+      durationValue < 1.0f || durationMs > MOTOR_CHARACTERIZATION_MAX_TIME) {
+    String jsonResponse = "{\"error\":\"request outside characterization bounds\"";
+    jsonResponse += ",\"maxAbsPwm\":" + String(MOTOR_CHARACTERIZATION_MAX_PWM);
+    jsonResponse += ",\"maxDurationMs\":" + String(MOTOR_CHARACTERIZATION_MAX_TIME);
+    jsonResponse += "}";
+    sendJson(client, "HTTP/1.1 400 Bad Request", jsonResponse);
+    return true;
+  }
+
+  BalanceTelemetry balance;
+  balance_get_status(balance);
+  if (balance.balanceMotorOutputArmed) {
+    sendJson(client, "HTTP/1.1 409 Conflict", "{\"error\":\"disarm balance control before motor characterization\"}");
+    return true;
+  }
+
+#ifdef SAFE_BRINGUP
+  sendJson(client, "HTTP/1.1 409 Conflict", "{\"error\":\"SAFE_BRINGUP disables motor characterization\"}");
+  return true;
+#endif
+
+  MotorCommandMsg msg{};
+  msg.cmd = MotorCommand::BalanceDrive;
+  msg.timeoutMs = durationMs;
+  msg.leftPwm = leftPwm;
+  msg.rightPwm = rightPwm;
+  const unsigned long queuedAtMs = millis();
+  const bool queued = motor_submit_command(msg);
+
+  String jsonResponse = "{";
+  jsonResponse += "\"queued\":" + String(jsonBool(queued));
+  jsonResponse += ",\"queuedAtMs\":" + String(queuedAtMs);
+  jsonResponse += ",\"leftPwm\":" + String(leftPwm);
+  jsonResponse += ",\"rightPwm\":" + String(rightPwm);
+  jsonResponse += ",\"durationMs\":" + String(durationMs);
+  jsonResponse += ",\"maxAbsPwm\":" + String(MOTOR_CHARACTERIZATION_MAX_PWM);
+  jsonResponse += ",\"maxDurationMs\":" + String(MOTOR_CHARACTERIZATION_MAX_TIME);
+  jsonResponse += "}";
+  sendJson(client, queued ? "HTTP/1.1 202 Accepted" : "HTTP/1.1 503 Service Unavailable", jsonResponse);
   return true;
 }
 

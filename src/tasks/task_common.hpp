@@ -58,6 +58,8 @@ constexpr unsigned long MOTOR_FORWARD_BACK_TIME = 200; // ms
 constexpr unsigned long MOTOR_TURN_TIME = 180; // ms
 constexpr unsigned long MOTOR_DIAGNOSTIC_TIME = 220; // ms
 constexpr unsigned long MOTOR_HOLD_REFRESH_TIME = 900; // ms
+constexpr int MOTOR_CHARACTERIZATION_MAX_PWM = 90;
+constexpr unsigned long MOTOR_CHARACTERIZATION_MAX_TIME = 600; // ms
 
 // Initialize shared queue and state
 void task_common_init();

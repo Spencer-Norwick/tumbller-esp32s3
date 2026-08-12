@@ -9,9 +9,12 @@
 static void motorTask(void *pvParameters);
 static void publishEncoderTelemetry();
 static void publishEncoderTelemetryLocked(const EncoderTelemetry &telemetry);
+static void publishMotorApplied(int leftPwm, int rightPwm, unsigned long timeoutMs, bool running);
 static Motor motor;
 static EncoderTelemetry g_encoderTelemetry;
 static portMUX_TYPE g_encoderTelemetryMux = portMUX_INITIALIZER_UNLOCKED;
+static MotorAppliedTelemetry g_motorAppliedTelemetry;
+static portMUX_TYPE g_motorAppliedTelemetryMux = portMUX_INITIALIZER_UNLOCKED;
 static unsigned long g_encoderLastLeft = 0;
 static unsigned long g_encoderLastRight = 0;
 static float g_encoderSpeedFilterOld = 0.0f;
@@ -20,6 +23,7 @@ void motor_task_start() {
   motor.Pin_init();
   motor.Encoder_init();
   motor.Stop(0);
+  publishMotorApplied(0, 0, 0, false);
   motor_reset_encoder_counts();
   xTaskCreatePinnedToCore(motorTask, "motorTask", 4096, nullptr, 2, nullptr, 1);
 }
@@ -42,6 +46,16 @@ void motor_reset_encoder_counts() {
   publishEncoderTelemetryLocked(telemetry);
 }
 
+void motor_snapshot_encoder_counts(unsigned long &left, unsigned long &right) {
+  Motor::SnapshotEncoderCounts(left, right);
+}
+
+void motor_get_applied_status(MotorAppliedTelemetry &out) {
+  taskENTER_CRITICAL(&g_motorAppliedTelemetryMux);
+  out = g_motorAppliedTelemetry;
+  taskEXIT_CRITICAL(&g_motorAppliedTelemetryMux);
+}
+
 static void motorTask(void *pvParameters) {
   (void)pvParameters;
   bool motorRunning = false;
@@ -55,6 +69,7 @@ static void motorTask(void *pvParameters) {
       switch (msg.cmd) {
         case MotorCommand::Forward:
           motor.Forward(MOTOR_SPEED);
+          publishMotorApplied(MOTOR_SPEED, MOTOR_SPEED, msg.timeoutMs, true);
           motorState = MOTOR_STATE_STRINGS[0];
           motorRunning = true;
           motorTimeout = msg.timeoutMs;
@@ -62,6 +77,7 @@ static void motorTask(void *pvParameters) {
           break;
         case MotorCommand::Back:
           motor.Back(MOTOR_SPEED);
+          publishMotorApplied(-MOTOR_SPEED, -MOTOR_SPEED, msg.timeoutMs, true);
           motorState = MOTOR_STATE_STRINGS[1];
           motorRunning = true;
           motorTimeout = msg.timeoutMs;
@@ -69,6 +85,7 @@ static void motorTask(void *pvParameters) {
           break;
         case MotorCommand::Left:
           motor.Left(MOTOR_SPEED);
+          publishMotorApplied(-MOTOR_SPEED, MOTOR_SPEED, msg.timeoutMs, true);
           motorState = MOTOR_STATE_STRINGS[2];
           motorRunning = true;
           motorTimeout = msg.timeoutMs;
@@ -76,6 +93,7 @@ static void motorTask(void *pvParameters) {
           break;
         case MotorCommand::Right:
           motor.Right(MOTOR_SPEED);
+          publishMotorApplied(MOTOR_SPEED, -MOTOR_SPEED, msg.timeoutMs, true);
           motorState = MOTOR_STATE_STRINGS[3];
           motorRunning = true;
           motorTimeout = msg.timeoutMs;
@@ -83,6 +101,7 @@ static void motorTask(void *pvParameters) {
           break;
         case MotorCommand::LeftHigh:
           motor.LeftOnlyHigh(MOTOR_SPEED);
+          publishMotorApplied(-MOTOR_SPEED, 0, msg.timeoutMs, true);
           motorState = "LEFT_HIGH";
           motorRunning = true;
           motorTimeout = msg.timeoutMs;
@@ -90,6 +109,7 @@ static void motorTask(void *pvParameters) {
           break;
         case MotorCommand::LeftLow:
           motor.LeftOnlyLow(MOTOR_SPEED);
+          publishMotorApplied(MOTOR_SPEED, 0, msg.timeoutMs, true);
           motorState = "LEFT_LOW";
           motorRunning = true;
           motorTimeout = msg.timeoutMs;
@@ -97,6 +117,7 @@ static void motorTask(void *pvParameters) {
           break;
         case MotorCommand::RightHigh:
           motor.RightOnlyHigh(MOTOR_SPEED);
+          publishMotorApplied(0, -MOTOR_SPEED, msg.timeoutMs, true);
           motorState = "RIGHT_HIGH";
           motorRunning = true;
           motorTimeout = msg.timeoutMs;
@@ -104,6 +125,7 @@ static void motorTask(void *pvParameters) {
           break;
         case MotorCommand::RightLow:
           motor.RightOnlyLow(MOTOR_SPEED);
+          publishMotorApplied(0, MOTOR_SPEED, msg.timeoutMs, true);
           motorState = "RIGHT_LOW";
           motorRunning = true;
           motorTimeout = msg.timeoutMs;
@@ -111,6 +133,7 @@ static void motorTask(void *pvParameters) {
           break;
         case MotorCommand::BalanceDrive:
           motor.DriveSigned(msg.leftPwm, msg.rightPwm);
+          publishMotorApplied(constrain(msg.leftPwm, -255, 255), constrain(msg.rightPwm, -255, 255), msg.timeoutMs, true);
           motorState = "BALANCE_DRIVE";
           motorRunning = true;
           motorTimeout = msg.timeoutMs;
@@ -119,6 +142,7 @@ static void motorTask(void *pvParameters) {
         case MotorCommand::Stop:
         default:
           motor.Stop(0);
+          publishMotorApplied(0, 0, 0, false);
           motorState = MOTOR_STATE_STRINGS[4];
           motorRunning = false;
           motorTimeout = 0;
@@ -128,6 +152,7 @@ static void motorTask(void *pvParameters) {
 
     if (motorRunning && motorTimeout > 0 && (millis() - motorStartTime >= motorTimeout)) {
       motor.Stop(0);
+      publishMotorApplied(0, 0, 0, false);
       motorRunning = false;
       motorState = MOTOR_STATE_STRINGS[4];
 #ifdef USE_SERIAL
@@ -178,4 +203,16 @@ static void publishEncoderTelemetryLocked(const EncoderTelemetry &telemetry) {
   taskENTER_CRITICAL(&g_encoderTelemetryMux);
   g_encoderTelemetry = telemetry;
   taskEXIT_CRITICAL(&g_encoderTelemetryMux);
+}
+
+static void publishMotorApplied(int leftPwm, int rightPwm, unsigned long timeoutMs, bool running) {
+  taskENTER_CRITICAL(&g_motorAppliedTelemetryMux);
+  g_motorAppliedTelemetry.initialized = true;
+  g_motorAppliedTelemetry.updatedAtMs = millis();
+  g_motorAppliedTelemetry.sequence++;
+  g_motorAppliedTelemetry.leftPwm = leftPwm;
+  g_motorAppliedTelemetry.rightPwm = rightPwm;
+  g_motorAppliedTelemetry.timeoutMs = timeoutMs;
+  g_motorAppliedTelemetry.running = running;
+  taskEXIT_CRITICAL(&g_motorAppliedTelemetryMux);
 }

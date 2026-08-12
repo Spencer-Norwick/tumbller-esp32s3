@@ -8,7 +8,7 @@ This guide is for local firmware bring-up and balance-control validation.
 - Working branch: `feature/self-balancing-sensor-validation`
 - Local dashboard/proxy: `tools/rover_control.py` in this repo; `/Users/spencer/Desktop/Projects/yak_rover/rover_control.py` is the current working copy used during bring-up.
 - Current robot URL: `http://192.168.4.53`
-- Current USB upload port: `/dev/cu.usbmodem11201`
+- Current USB upload port: `/dev/cu.usbmodem101`
 
 ## Build And Upload
 
@@ -16,7 +16,7 @@ From the firmware repo:
 
 ```sh
 platformio run
-platformio run --target upload --upload-port /dev/cu.usbmodem11201
+platformio run --target upload --upload-port /dev/cu.usbmodem101
 ```
 
 Use `platformio run` before each firmware milestone. Use upload only when the build passes.
@@ -79,6 +79,7 @@ curl http://192.168.4.53/motor/stop
 - `src/tasks/server_task.cpp`: HTTP endpoints served by the ESP32.
 - `src/config.hpp`: compile-time pins, loop timing, default gains, and safety limits.
 - `tools/rover_control.py`: local dashboard and HTTP proxy for hands-on testing.
+- `tools/motor_characterize.py`: bounded wheels-up motor deadband and response-latency measurement.
 
 ## Safe Test Order
 
@@ -90,6 +91,20 @@ curl http://192.168.4.53/motor/stop
 6. Confirm `/balance/status` has `lastReadOk=true`, `calibrated=true`, and `failedReadCount=0`.
 7. For motor tests, put the robot wheels-up and keep fingers clear.
 8. Use Space or Escape in the dashboard to disarm and stop.
+
+## Wheels-Up Motor Characterization
+
+Use this before changing controller gains when wheel response seems delayed or weak. It drives one wheel at a time for `450 ms` at PWM levels `20,30,40,50,60,75,90`; firmware rejects values above `90` and durations above `600 ms`.
+
+1. Put the robot wheels-up with both wheels completely clear and keep hands, cables, and the tether away from the tires.
+2. Build and upload the characterization firmware.
+3. Run:
+
+```sh
+python3 tools/motor_characterize.py --rover-url http://192.168.4.53 --wheels-up
+```
+
+The tool disarms balance control, stops between trials, resets the encoders, and reports command-application lag, first observed encoder-pulse latency, and pulse totals for each side/direction/PWM case. A missing first-pulse value means that case did not move during the bounded pulse. It issues a final stop even when a trial fails.
 
 ## Wheels-Up Speed Sign Check
 

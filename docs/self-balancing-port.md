@@ -82,6 +82,8 @@ The first controller milestone computes a proposed balance output without applyi
 - Motor commands use a one-element latest-value mailbox. Each balance update overwrites any unconsumed prior command so the motor task never executes a FIFO backlog of stale corrections; stop commands use the same overwrite path.
 - `/balance/config` includes `motorSign` so first-motion polarity can be flipped without rebuilding.
 - Manual `/motor/*` diagnostics remain separate from balance telemetry.
+- `/motor/test/signed?left=...&right=...&ms=...` provides a balance-disarmed characterization pulse bounded to `+/-90 pwm` and `600 ms`; requests are rejected while balance output is armed.
+- `/motor/measurement` reports the PWM values and timestamp most recently applied by the motor task together with an immediate snapshot of both raw encoder counters. This separates command-application delay from motor deadband and mechanical startup delay.
 - Encoders are initialized by the motor task and exposed at `/encoder/status`.
 - Encoder speed telemetry uses Elegoo's 40 ms speed-window shape: left/right pulse deltas are averaged into `combinedSpeedPulses`, then filtered as `old * 0.7 + sample * 0.3`.
 - Current encoder reads are single-channel pulse counts, not quadrature direction. Direction for speed-loop integration must be inferred from the commanded wheel PWM sign, matching Elegoo's `pwm_left < 0 ? -count : count` pattern.

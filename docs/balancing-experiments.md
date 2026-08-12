@@ -526,3 +526,15 @@ Validation: `./scripts/check.sh` passed, the firmware was uploaded, and a `10000
 Takeaway: The mailbox change removes a real stale-command and rejected-stop failure mode, but it did not account for all of the observed lag. Do not resume blind floor tuning yet.
 
 Next action: Add an automated wheels-up motor characterization that measures each side and direction across PWM, including the first encoder response and the motor-command application time. Use those measurements to separate electrical/mechanical deadband from software latency before changing controller gains.
+
+## 2026-08-12: Automated Wheels-Up Motor Characterization
+
+Goal: Measure whether the observed delayed response comes from command delivery, motor startup deadband, or left/right asymmetry before changing the balance controller again.
+
+Setup: Both wheels were fully clear. Firmware exposed the latest PWM actually applied by the motor task plus raw encoder snapshots. `tools/motor_characterize.py` disarmed balance output and drove one wheel at a time in both directions for `450 ms` at `20, 30, 40, 50, 60, 75, 90 pwm`, stopping and resetting encoders between cases. Firmware bounded the endpoint to `+/-90 pwm` and `600 ms` and rejected tests while balance output was armed.
+
+Result: Applied-command lag was `0-6 ms` across all `28` cases, ruling out a human-visible software scheduling delay. Motion below `40 pwm` was absent or inconsistent: for example, left-reverse moved at `20 pwm` but stalled at `30 pwm`, while right-forward produced no pulse at `20 pwm` and only one late pulse at `30 pwm`. Every side/direction case moved consistently from `40 pwm` upward. At `40 pwm`, first observed pulses arrived in `27-90 ms` and the four cases produced `23-29` pulses during the drive window. At `90 pwm`, left/right produced `102/95` forward pulses and `93/89` reverse pulses during the drive window, showing modest rather than extreme side asymmetry. The final state reported `leftPwm=0`, `rightPwm=0`, and `running=false`. Invalid `91 pwm` and missing-parameter requests both returned HTTP `400` without motion.
+
+Takeaway: The visible delay is dominated by controller effort remaining inside the motor's roughly `40 pwm` reliable-start threshold, not by the firmware command path. With `Kp=10`, the proportional term alone does not reach reliable actuation until roughly `4 deg` of error. That is enough falling distance to look and behave late.
+
+Next action: Add a measured responsive angle-only profile with `Kp=35`, `Ki=0`, `Kd=0.5`, output limit `90 pwm`, max angle `45 deg`, and speed mixing disabled. At that gain, about `1.15 deg` of proportional error reaches the measured reliable-start threshold. Validate it wheels-up with small `+/-5 deg` reversals before any tethered floor run.

@@ -3,12 +3,12 @@
 Last updated: 2026-08-12
 Repository: `tumbller-esp32s3`
 Branch: `feature/self-balancing-sensor-validation`
-Validated source baseline: `cfb2f12 fix(balance): damp wheel speed in port mixer` plus the pending latest-command mailbox fix
-Last hardware-validated firmware commit: pending latest-command mailbox fix built and uploaded on 2026-08-12
+Validated source baseline: `45cef66 fix(motor): apply latest command without backlog` plus the pending motor-characterization increment
+Last hardware-validated firmware commit: pending motor-characterization increment built, uploaded, and exercised on 2026-08-12
 
 ## Current Objective
 
-Measure the motor plant before further controller tuning. Characterize per-side/per-direction PWM deadband and command-to-motion latency wheels-up, then use that evidence to choose the next inner angle-loop change.
+Use the measured motor startup threshold to make the inner angle loop respond near upright, validate that profile wheels-up, then return to the slack-tether floor test.
 
 ## Verified State
 
@@ -20,13 +20,15 @@ Measure the motor plant before further controller tuning. Characterize per-side/
 - A five-second, 90-PWM wheels-up authority test produced clear, controlled correction in both directions with both encoders active and automatic shutdown.
 - Corrected speed-loop mixing reduces same-direction drive instead of reinforcing it, verified in both directions during a five-second wheels-up run.
 - Motor commands now use a one-element latest-value mailbox, eliminating FIFO command backlog and full-queue stop rejection. A ten-second wheels-up reversal test confirmed live command changes and automatic disarm, but the operator still observed substantial physical response delay.
+- Automated wheels-up characterization measured `0-6 ms` command-application lag and a reliable startup threshold of approximately `40 pwm` in all four side/direction cases. The prior `Kp=10` profile stayed below reliable motor effort until about `4 deg` of proportional error.
 - The local dashboard provides runtime tuning, timed-arm profiles, telemetry traces, and immediate disarm/stop controls.
 
 Detailed evidence is in `docs/balancing-experiments.md` and the operating procedure is in `docs/operator-guide.md`.
 
 ## Recent Progress
 
-- Replaced the motor command FIFO with a latest-value mailbox so stale corrections cannot accumulate (pending commit).
+- Added bounded signed-motor characterization and applied-output telemetry, then completed all 28 wheels-up cases (pending commit).
+- Replaced the motor command FIFO with a latest-value mailbox so stale corrections cannot accumulate (`45cef66`).
 - Corrected the port-specific speed-mix feedback sign and added a host regression test (`cfb2f12`).
 - Extended bounded tether trials to ten seconds (`ac79027`).
 - Raised the arm ceiling to 90 PWM after controlled wheels-up validation and updated the tether profile to a human-observable five-second envelope (`3ae46da`).
@@ -45,14 +47,15 @@ Detailed evidence is in `docs/balancing-experiments.md` and the operating proced
 | Five-second wheels-up authority test at `3ae46da` | passed | 698 samples, correct controlled bidirectional response, encoder totals left 656/right 835, zero sensor failures, timed disarm, and angle gate verified on 2026-08-12. |
 | Corrected speed-mix wheels-up test at `cfb2f12` | passed | 694 samples; corrected feedback reduced same-direction drive in both directions with zero mixed-output saturation and zero sensor failures. |
 | Latest-command mailbox wheels-up reversal test | passed with unresolved observation | Build/upload passed; ten-second test exercised both directions and angle-limit disarm, but visible response still felt delayed to the operator. |
+| Automated motor characterization | passed | 28 bounded wheels-up cases; application lag `0-6 ms`; all side/direction cases reliably active at `40 pwm`; final motor state stopped; invalid requests rejected. |
 | Dashboard source comparison | passed | Workspace and repository copies had identical SHA-256 on 2026-08-12. |
 
 ## Active Problems
 
 - Stable wheels-down self-balancing has not yet been demonstrated.
-- Motor deadband and command-to-first-motion latency have not been measured; perceived lag remains unexplained after eliminating queue backlog.
+- The current low-gain balance profiles command below the measured reliable motor threshold near upright, producing late visible correction.
 - Encoder direction is inferred from output sign, so it cannot independently detect wheel reversal or external wheel motion.
-- The firmware has no substantive PlatformIO unit tests yet; only build and hardware validation currently cover control behavior.
+- Hardware-independent mixer and characterization logic have host regression tests; there are still no on-device PlatformIO unit tests.
 
 ## Decisions and Constraints
 
@@ -64,6 +67,6 @@ Detailed evidence is in `docs/balancing-experiments.md` and the operating proced
 
 ## Next Action
 
-1. Add and run an automated wheels-up motor characterization across PWM for the left/right forward/reverse cases.
-2. Record command-application delay, first encoder response, pulse count, and practical startup threshold.
-3. Use the measurements to revise the inner angle-loop actuation strategy before another wheels-down tether trial.
+1. Add a responsive angle-only runtime profile using `Kp=35`, `Ki=0`, `Kd=0.5`, limit `90 pwm`, max angle `45 deg`, and speed mixing disabled.
+2. Validate small `+/-5 deg` wheels-up reversals; correction should begin near `1.15 deg` instead of waiting for roughly `4 deg`.
+3. If direction and response are prompt without violent reversal, run the same profile wheels-down under the slack tether for `10000 ms`.
