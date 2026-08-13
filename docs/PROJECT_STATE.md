@@ -3,12 +3,12 @@
 Last updated: 2026-08-12
 Repository: `tumbller-esp32s3`
 Branch: `feature/self-balancing-sensor-validation`
-Validated source baseline: `d82b4fb feat(balance): record high-rate hardware traces` plus the pending 160-PWM authority increment
-Last hardware-validated firmware commit: pending 160-PWM authority increment built, uploaded, and exercised wheels-up on 2026-08-12
+Validated source baseline: `86af765 feat(balance): validate 160 pwm authority`
+Last hardware-validated firmware commit: `86af765`, exercised wheels-up and wheels-down on 2026-08-12
 
 ## Current Objective
 
-Repeat the responsive-profile slack-tether floor trial at the wheels-up-validated `160 pwm` ceiling without changing gains.
+Reduce the overdriven floor response while retaining enough motor reserve to catch the robot.
 
 ## Verified State
 
@@ -25,6 +25,7 @@ Repeat the responsive-profile slack-tether floor trial at the wheels-up-validate
 - The onboard 20 ms trace captured 465 armed samples, 13 requested sign reversals, zero requested/applied PWM mismatches, at most 1 ms observed applied-command age, balanced encoder activity, corrected 79.8% saturation evidence during deliberate large rocking, and automatic stop. The operator reported the response was “a lot more responsive.”
 - The first traced wheels-down responsive-profile run produced a growing `-5.7/+14.1/-27.9/+32.0/-44.4 deg` oscillation, saturated for 91.5% of 293 armed samples, and auto-disarmed at 6.25 seconds. Applied PWM followed requests within 1 ms after startup, proving the remaining slow catch is the `90 pwm` floor-load authority limit rather than software lag or reverted configuration.
 - The `160 pwm` ceiling passed all four bounded wheel/direction cases with `0-4 ms` application lag and `29-41 ms` first motion. A five-second wheels-up controller run captured two reversals, zero requested/applied mismatches, balanced `2075/2039` encoder gains, and timed stop.
+- The first `160 pwm` floor run at `Kp=35`, `Kd=0.5` auto-disarmed at the angle gate after approximately `2.87 s`; it saturated `349/400` samples (`87.3%`) and the operator observed abrupt tire slip and jerky motion. The trace confirms an overdriven, underdamped response rather than command delay.
 - The local dashboard provides runtime tuning, timed-arm profiles, telemetry traces, and immediate disarm/stop controls.
 
 Detailed evidence is in `docs/balancing-experiments.md` and the operating procedure is in `docs/operator-guide.md`.
@@ -59,7 +60,7 @@ Detailed evidence is in `docs/balancing-experiments.md` and the operating proced
 ## Active Problems
 
 - Stable wheels-down self-balancing has not yet been demonstrated.
-- Whether `160 pwm` supplies enough floor-load authority for a catch has not yet been measured.
+- `160 pwm` supplies ample wheel motion but the `Kp=35` profile applies it too abruptly to preserve traction or catch the robot.
 - Encoder direction is inferred from output sign, so it cannot independently detect wheel reversal or external wheel motion.
 - Hardware-independent mixer and characterization logic have host regression tests; there are still no on-device PlatformIO unit tests.
 
@@ -73,6 +74,6 @@ Detailed evidence is in `docs/balancing-experiments.md` and the operating proced
 
 ## Next Action
 
-1. Put the robot wheels-down under the slack overhead tether and recalibrate upright.
-2. Apply `Kp=35`, `Ki=0`, `Kd=0.5`, limit `160 pwm`, max angle `45 deg`, speed mixing disabled, and arm for `10000 ms`.
-3. Download `/balance/trace` and compare peak growth, arm duration, and saturation against the `90 pwm` floor trace.
+1. Return the robot upright under the slack overhead tether and recalibrate stationary.
+2. Change only proportional gain to `Kp=20`, retaining `Ki=0`, `Kd=0.5`, limit `160 pwm`, max angle `45 deg`, and speed mixing disabled.
+3. Arm for `10000 ms`, then compare onset jerk, tire slip, peak growth, arm duration, and saturation against the `Kp=35` floor trace.

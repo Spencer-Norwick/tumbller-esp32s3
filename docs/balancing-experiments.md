@@ -590,3 +590,15 @@ Result: All four direct cases passed: application lag was `0-4 ms`, first observ
 Takeaway: `160 pwm` is validated electrically and mechanically in all four wheel/direction cases and through the actual balance command path. The higher ceiling is ready for a same-gain slack-tether floor comparison. Do not change `Kp`, `Kd`, speed mix, or the angle gate during that comparison.
 
 Next action: Put the robot wheels-down under the slack overhead tether, recalibrate upright, apply `Kp=35`, `Ki=0`, `Kd=0.5`, limit `160 pwm`, max angle `45 deg`, and speed mixing disabled, then run one `10000 ms` arm and compare its onboard trace against the `90 pwm` floor run.
+
+## 2026-08-12: 160-PWM Responsive Profile Floor Trial
+
+Goal: Determine whether raising only the actuator ceiling from `90` to `160 pwm` supplies enough floor-load authority for the previously saturated responsive angle controller to catch the robot.
+
+Setup: Wheels-down under the overhead tether, stationary upright gyro calibration, `Kp=35`, `Ki=0`, `Kd=0.5`, limit `160 pwm`, max angle `45 deg`, speed mixing disabled, and a requested `10000 ms` arm. Control and telemetry were performed wirelessly at `192.168.4.53`; firmware was `86af765`.
+
+Result: The robot did not balance. It crossed the angle gate and auto-disarmed after approximately `2.87 s`, completing `400` control samples. Output saturated for `349/400` samples (`87.3%`). The trace moved from roughly `-3.4 deg` through `+35.0 deg`, back through upright, and reached `-45.7 deg`; requested and applied PWM matched throughout the captured armed samples. Encoder totals increased by approximately `2718` left and `1853` right, a large floor-run asymmetry despite identical commands. The operator observed that motor onset was extremely fast and jerky and caused visible wheel/tire slip.
+
+Takeaway: `160 pwm` provides ample actuator motion but does not stabilize the current `Kp=35` floor profile. The controller reaches full output near `4.6 deg`, breaks traction, and produces a faster underdamped oscillation than the `90 pwm` trial. This is an overdriven, actuator-saturated floor response rather than software latency. Do not repeat this profile unchanged.
+
+Next action: Change only proportional gain from `Kp=35` to `Kp=20`, retaining `Ki=0`, `Kd=0.5`, the `160 pwm` reserve, `45 deg` gate, speed mixing disabled, and the `10000 ms` bounded arm. This moves the reliable-start threshold to about `2 deg` and full proportional output to `8 deg`, testing whether a less abrupt torque rise preserves traction without restoring the old delayed response.
