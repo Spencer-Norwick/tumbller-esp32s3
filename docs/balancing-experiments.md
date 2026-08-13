@@ -626,3 +626,27 @@ Result: The robot did not balance and auto-disarmed after approximately `4.0 s` 
 Takeaway: Corrected speed feedback addresses the observed wheel runaway, but `speedScale=0.20` removes too much catch authority at large angle. The useful damping range is now bracketed between `0` (runaway and late reversal) and `0.20` (less slip but over-braked). The tighter tether geometry installed after this run will reduce available angle and linear runway; it is acceptable as a tuning catch fixture but any taut-tether interval cannot count as self-balancing evidence.
 
 Next action: Keep all angle-controller settings and the calibrated setpoint unchanged, reduce only `speedScale` from `0.20` to `0.10`, recalibrate upright, and repeat the bounded floor trial. Compare wheel slip, mixed PWM at large error, reversal timing, angle-trip duration, and whether the tighter tether supports the chassis.
+
+## 2026-08-12: Tighter-Tether 0.10 Speed-Damping Trial
+
+Goal: Test the midpoint between angle-only wheel runaway and the over-braked `speedScale=0.20` response.
+
+Setup: The tripod tether had been shortened, reducing both fall angle and available horizontal wheel travel. The robot was recalibrated at a `-0.67 deg` upright setpoint. Runtime control was `Kp=20`, `Ki=0`, `Kd=0.5`, limit `160 pwm`, max angle `45 deg`, speed mixing enabled, and `speedScale=0.10`.
+
+Result: The arm completed the full `9.98 s` with `466` armed trace samples because the tighter tether prevented an angle-limit trip. Pitch remained between approximately `-39.2` and `+31.6 deg`, mixed PWM reached about `-150/+151`, and raw-angle saturation occurred in `105/466` trace samples. Requested and applied PWM matched in all armed samples. Encoder gains were `2295` left and `1406` right. The operator observed the chassis hanging at tether endpoints with the wheels spinning.
+
+Takeaway: This was not balancing evidence. The tether became structural support and restricted the wheel translation needed to move under the center of mass. `speedScale=0.10` also permits substantial endpoint drive and wheel spin. The persistent approximately `1.6x` left/right encoder difference remains present under floor load.
+
+Next action: Restore a slack-at-upright tether with more horizontal runway and catch before the `45 deg` software gate, then test the bracket midpoint `speedScale=0.15`. Do not interpret a full-duration run as success when the tether is taut.
+
+## 2026-08-12: 0.15 Midpoint Damping Exposed Loaded Wheel Mismatch
+
+Goal: Test the midpoint damping value after bracketing `0.10` as too permissive and `0.20` as over-braked.
+
+Setup: The robot was recalibrated upright at a `-2.77 deg` setpoint with `Kp=20`, `Ki=0`, `Kd=0.5`, limit `160 pwm`, max angle `45 deg`, speed mixing enabled, and `speedScale=0.15`.
+
+Result: The robot did not balance and auto-disarmed after approximately `1.35 s`. Armed pitch moved from about `-4.5 deg` to `-21.6 deg`, reversed through upright, and reached `+43.7 deg` before the next sample crossed the angle gate. Mixed PWM ranged from approximately `-141` to `+159`, and `41/64` armed trace samples were marked saturated. Requested and applied PWM differed only in the initial startup sample. Encoder gains were `939` left and `529` right. The high-rate trace exposed the mismatch immediately: at identical `-35 pwm` commands the left encoder had already counted `17` pulses while the right had counted only `1`; the imbalance persisted at higher commands.
+
+Takeaway: The dominant remaining problem is unequal loaded wheel response, not a missing global damping value. Identical left/right PWM produces severe yaw/traction asymmetry on the floor even though prior wheels-up `160 pwm` characterization was balanced. Continuing scalar gain or damping sweeps would tune around a mechanical/actuator mismatch instead of controlling it.
+
+Next action: Stop floor gain sweeps. Add guarded per-wheel speed matching/deadband compensation with telemetry and host tests, and reject all-zero IMU frames as unhealthy. Build and upload over USB, validate the compensation wheels-up and in a supported loaded straight-drive test, then return to tethered balancing.

@@ -8,7 +8,7 @@ Last hardware-validated firmware commit: `86af765`, exercised wheels-up and whee
 
 ## Current Objective
 
-Bracket wheel-speed damping so it reduces tire slip without removing the authority needed to catch the chassis.
+Correct the severe loaded left/right wheel-response mismatch before further balance-gain tuning.
 
 ## Verified State
 
@@ -28,6 +28,9 @@ Bracket wheel-speed damping so it reduces tire slip without removing the authori
 - The first `160 pwm` floor run at `Kp=35`, `Kd=0.5` auto-disarmed at the angle gate after approximately `2.87 s`; it saturated `349/400` samples (`87.3%`) and the operator observed abrupt tire slip and jerky motion. The trace confirms an overdriven, underdamped response rather than command delay.
 - Reducing `Kp` to `20` lowered saturation to `66.4%` but still hit the angle gate after approximately `2.18 s`. The trace and operator observation show that the angle-only loop keeps racing while wheel speed accumulates, then reverses too late. Encoder gains were strongly asymmetric at about `1811/1202` despite identical commands.
 - Enabling corrected speed feedback at `speedScale=0.20` reduced physical racing/slip and raw-angle saturation to `20.0%`, but over-braked the final catch: near the negative angle limit it reduced a `-160 pwm` angle command to about `-72 pwm`. The run reached the angle gate after roughly `4.0 s`.
+- A tighter-tether `speedScale=0.10` run lasted the full `9.98 s`, but only because the robot hung from the tether while its wheels spun. It accumulated `2295/1406` left/right encoder pulses and is not balance evidence.
+- The `speedScale=0.15` run auto-disarmed after about `1.35 s` and exposed loaded actuation mismatch immediately: at identical `-35 pwm`, the encoders reported `17` left pulses versus `1` right pulse; final armed gains were `939/529`.
+- A power-cycle recovered an IMU state that returned zero for all six raw axes while firmware incorrectly reported the read as healthy. A zero-frame health guard is required before the next firmware upload.
 - The local dashboard provides runtime tuning, timed-arm profiles, telemetry traces, and immediate disarm/stop controls.
 
 Detailed evidence is in `docs/balancing-experiments.md` and the operating procedure is in `docs/operator-guide.md`.
@@ -62,9 +65,10 @@ Detailed evidence is in `docs/balancing-experiments.md` and the operating proced
 ## Active Problems
 
 - Stable wheels-down self-balancing has not yet been demonstrated.
-- Angle-only control remains underdamped; `speedScale=0.20` proves active wheel-speed damping helps traction but is too strong for the catch, so the next bracket is `0.10`.
-- Floor-run left/right encoder activity is strongly asymmetric despite balanced wheels-up characterization, consistent with tire slip or unequal traction.
+- Global angle/speed tuning is no longer the next step: identical motor commands produce severely unequal loaded wheel motion, so per-wheel matching or mechanical correction is required first.
+- Floor-run left/right encoder activity is strongly asymmetric despite balanced wheels-up characterization, consistent with tire slip, unequal traction, or load-sensitive motor deadband.
 - The operator shortened the overhead tether after the `0.20` run. This reduces angle excursions but also wheel runway; taut-tether behavior is useful only as tuning-fixture evidence, not proof of balance.
+- All-zero MPU6050 frames can currently pass `lastReadOk`; do not arm after a zero frame even if the existing firmware safety status says `ok`.
 - Encoder direction is inferred from output sign, so it cannot independently detect wheel reversal or external wheel motion.
 - Hardware-independent mixer and characterization logic have host regression tests; there are still no on-device PlatformIO unit tests.
 
@@ -78,6 +82,19 @@ Detailed evidence is in `docs/balancing-experiments.md` and the operating proced
 
 ## Next Action
 
-1. Return the robot upright under the adjusted overhead tether and recalibrate stationary.
-2. Keep `Kp=20`, `Ki=0`, `Kd=0.5`, limit `160 pwm`, and max angle `45 deg`; use corrected speed mixing at `speedScale=0.10`.
-3. Arm for `10000 ms`, then compare wheel slip, reversal timing, angle-trip duration, and tether contact against both the angle-only and `0.20` traces.
+1. Add a zero-frame IMU health guard and guarded per-wheel speed-matching/deadband compensation with telemetry and host regression tests.
+2. Build and upload the firmware over USB, then validate motor matching wheels-up and with a supported, bounded loaded straight-drive test.
+3. Restore a tether that is slack upright, allows horizontal wheel runway, and catches before the `45 deg` gate before resuming balance trials.
+
+## Next Session Restart Point
+
+1. Charge the laptop as needed, reconnect the USB-C data cable to the ESP32, power the robot, and place it wheels-up and clear before any upload or motor validation.
+2. Confirm the branch is `feature/self-balancing-sensor-validation`, the working tree is clean, and the source baseline is `86af765` plus the later experiment-documentation commits.
+3. Implement two firmware changes before another floor trial:
+   - reject an MPU6050 sample when all six raw accel/gyro channels are zero, mark the sensor unhealthy, and prevent arming;
+   - compensate the loaded left/right response mismatch using guarded per-wheel deadband/speed matching, with runtime telemetry that makes each side's correction visible.
+4. Run `./scripts/check.sh`, upload over USB, and verify after reset that balance starts disarmed, raw IMU values are live, calibration succeeds, and motors remain at zero.
+5. Validate both wheel directions wheels-up, then run one bounded supported loaded straight-drive comparison. Do not resume balance gain sweeps until left/right loaded response is acceptably matched.
+6. Rebuild the tether setup so it is slack at upright, permits horizontal wheel travel, and catches before the `45 deg` software gate. A taut tether or endpoint hang is not balance evidence.
+
+Session-end hardware state on 2026-08-12: balance explicitly disarmed, motor stop sent, and `/motor/measurement` verified `leftPwm=0`, `rightPwm=0`, and `running=false`.
