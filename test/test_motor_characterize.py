@@ -19,6 +19,9 @@ class MotorCharacterizeTest(unittest.TestCase):
     def test_levels_are_sorted_and_deduplicated(self) -> None:
         self.assertEqual(parse_levels("40,20,40,30"), (20, 30, 40))
 
+    def test_high_authority_level_is_accepted(self) -> None:
+        self.assertEqual(parse_levels("160"), (160,))
+
     def test_threshold_requires_every_higher_level_to_move(self) -> None:
         cases = [trial(20, 8), trial(30, 0), trial(40, 23), trial(50, 39)]
         self.assertEqual(reliable_threshold(cases, minimum_pulses=2).pwm, 40)

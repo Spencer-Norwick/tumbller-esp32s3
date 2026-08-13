@@ -17,6 +17,7 @@ from typing import Any
 
 DEFAULT_ROVER_URL = os.environ.get("YAKROVER_URL", "http://192.168.4.53").rstrip("/")
 DEFAULT_PWM_LEVELS = (20, 30, 40, 50, 60, 75, 90)
+MAX_CHARACTERIZATION_PWM = 160
 
 
 @dataclass
@@ -166,8 +167,8 @@ def parse_levels(value: str) -> tuple[int, ...]:
         levels = tuple(sorted({int(item.strip()) for item in value.split(",") if item.strip()}))
     except ValueError as exc:
         raise argparse.ArgumentTypeError("PWM levels must be comma-separated integers") from exc
-    if not levels or levels[0] < 1 or levels[-1] > 90:
-        raise argparse.ArgumentTypeError("PWM levels must be between 1 and 90")
+    if not levels or levels[0] < 1 or levels[-1] > MAX_CHARACTERIZATION_PWM:
+        raise argparse.ArgumentTypeError(f"PWM levels must be between 1 and {MAX_CHARACTERIZATION_PWM}")
     return levels
 
 

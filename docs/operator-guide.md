@@ -89,7 +89,7 @@ curl http://192.168.4.53/motor/stop
 
 ## Wheels-Up Motor Characterization
 
-Use this before changing controller gains when wheel response seems delayed or weak. It drives one wheel at a time for `450 ms` at PWM levels `20,30,40,50,60,75,90`; firmware rejects values above `90` and durations above `600 ms`.
+Use this before changing controller gains when wheel response seems delayed or weak. By default it drives one wheel at a time for `450 ms` at PWM levels `20,30,40,50,60,75,90`; firmware rejects values above `160` and durations above `600 ms`. Pass `--levels 160` for the focused high-authority validation after a lower-authority sweep has passed.
 
 1. Put the robot wheels-up with both wheels completely clear and keep hands, cables, and the tether away from the tires.
 2. Build and upload the characterization firmware.
@@ -131,7 +131,7 @@ Start with the dashboard, not raw curl, so the same screen controls the arm time
 
 1. Rig the tether so it catches the body before a fall, but leaves the wheels touching the floor freely. Keep the tether slack at upright.
 2. Open the dashboard, press `DISARM / STOP`, then `Calibrate Gyro` while the robot is stationary and upright.
-3. Press `Responsive Angle (Measured)`. This applies `Kp=35.0`, `Ki=0.0`, `Kd=0.5`, `limit=90`, `maxAngle=45`, `speedMix=off`, and `Arm ms=10000`. The proportional term reaches the measured `40 pwm` reliable-start threshold at about `1.15 deg` of error. Use it only after a prompt, correct-direction wheels-up reversal check and with the overhead tether rigged.
+3. Press `Responsive Angle (Measured)`. This applies `Kp=35.0`, `Ki=0.0`, `Kd=0.5`, `limit=160`, `maxAngle=45`, `speedMix=off`, and `Arm ms=10000`. The proportional term reaches the measured `40 pwm` reliable-start threshold at about `1.15 deg` of error. The `160 pwm` authority ceiling must be validated wheels-up before using this profile on the floor, and floor use requires the overhead tether.
 4. Press `Arm Timed` and watch the robot, not just the numbers. Classify the run as: correct-direction catch, wrong-direction fall, underpowered fall, oscillation, or saturation.
 5. After each run, check `Run saturation`, `Mixed output`, `Safety reason`, `Arm timer`, and `Trace safety samples`.
 6. Tune angle loop first. If it falls the correct direction but weakly, increase `Kp` or `limit` slightly. If it snaps/oscillates, lower `Kp` or raise `Kd` slightly. Keep `Ki=0` for these trials.

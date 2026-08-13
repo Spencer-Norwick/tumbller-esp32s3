@@ -671,7 +671,7 @@ HTML = """<!doctype html>
             <label class="pid-row"><span>Kp</span><input id="gainKp" inputmode="decimal" value="35.0"></label>
             <label class="pid-row"><span>Ki</span><input id="gainKi" inputmode="decimal" value="0.0"></label>
             <label class="pid-row"><span>Kd</span><input id="gainKd" inputmode="decimal" value="0.5"></label>
-            <label class="pid-row"><span>Limit</span><input id="gainLimit" inputmode="decimal" value="90"></label>
+            <label class="pid-row"><span>Limit</span><input id="gainLimit" inputmode="decimal" value="160"></label>
             <label class="pid-row"><span>Setpoint</span><input id="gainSetpoint" inputmode="decimal" value="0.0"></label>
             <label class="pid-row"><span>Max angle</span><input id="gainMaxAngle" inputmode="decimal" value="45"></label>
             <label class="pid-row"><span>Motor sign</span><select id="gainMotorSign"><option value="1">+1</option><option value="-1">-1</option></select></label>
@@ -1146,8 +1146,8 @@ HTML = """<!doctype html>
     }
 
     const runtimeProfiles = {
-      tether: { kp: "35.0", ki: "0.0", kd: "0.5", limit: "90", setpoint: "0.0", maxAngle: "45", motorSign: "1", speedMix: "0", speedScale: "0.05", armMs: "10000" },
-      speedMix: { kp: "35.0", ki: "0.0", kd: "0.5", limit: "90", setpoint: "0.0", maxAngle: "45", motorSign: "1", speedMix: "1", speedScale: "0.05", armMs: "10000" },
+      tether: { kp: "35.0", ki: "0.0", kd: "0.5", limit: "160", setpoint: "0.0", maxAngle: "45", motorSign: "1", speedMix: "0", speedScale: "0.05", armMs: "10000" },
+      speedMix: { kp: "35.0", ki: "0.0", kd: "0.5", limit: "160", setpoint: "0.0", maxAngle: "45", motorSign: "1", speedMix: "1", speedScale: "0.05", armMs: "10000" },
     };
 
     async function applyRuntimeProfile(name) {

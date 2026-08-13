@@ -576,3 +576,17 @@ Result: The run did not balance and auto-disarmed after `6252 ms` when estimated
 Takeaway: No controller setting reverted and there is no material software command delay. Free-spinning wheels-up response hid the floor-load authority limit. The floor run is actuator-limited at the current `90 pwm` ceiling; adding proportional gain cannot help while output is already clipped. The growing alternating peaks classify this run as an under-authority unstable oscillation, not a successful catch.
 
 Next action: Raise the bounded arm and characterization ceiling to `160 pwm` while retaining the same gains, angle gate, timed arm, sensor gates, latest-command mailbox, and explicit stop. Validate `160 pwm` in all four wheel/direction cases wheels-up, then run a short wheels-up responsive-profile reversal test before repeating the tethered floor trial. Change authority only so its effect is identifiable.
+
+## 2026-08-12: 160-PWM Authority Wheels-Up Validation
+
+Goal: Validate the higher motor-authority ceiling independently before using it to address the `90 pwm`-saturated floor run.
+
+Change: Raise `BALANCE_ARM_MAX_OUTPUT_LIMIT` and the bounded signed-motor characterization ceiling from `90` to `160 pwm`. Keep the `600 ms` characterization-duration cap, `10000 ms` balance-arm cap, `45 deg` angle gate, sensor gates, latest-command mailbox, command watchdog, and explicit stop. Update the dashboard responsive profile to retain `Kp=35`, `Ki=0`, `Kd=0.5`, speed mixing disabled, while changing only its output limit to `160 pwm`.
+
+Setup: The operator explicitly approved the `160 pwm` ceiling and confirmed both wheels were clear. The board restarted disarmed. First, each wheel/direction case ran alone at `160 pwm` for `450 ms`. Then the robot was calibrated while stationary and held wheels-up for a `5000 ms` responsive-profile reversal run.
+
+Result: All four direct cases passed: application lag was `0-4 ms`, first observed encoder motion was `29-41 ms`, and driven pulse counts were left forward `191`, left reverse `175`, right forward `178`, and right reverse `185`. Every case stopped automatically. The controller run captured `234` armed samples over `4991 ms`, pitch from `-15.281` to `+8.343 deg`, two requested sign reversals, zero requested/applied PWM mismatches, at most `1 ms` observed applied-command age, left/right encoder gains `2075/2039`, and timed stop. Deliberate hand motion saturated `190/234` samples at the new ceiling; that confirms the ceiling was exercised rather than indicating a balance result.
+
+Takeaway: `160 pwm` is validated electrically and mechanically in all four wheel/direction cases and through the actual balance command path. The higher ceiling is ready for a same-gain slack-tether floor comparison. Do not change `Kp`, `Kd`, speed mix, or the angle gate during that comparison.
+
+Next action: Put the robot wheels-down under the slack overhead tether, recalibrate upright, apply `Kp=35`, `Ki=0`, `Kd=0.5`, limit `160 pwm`, max angle `45 deg`, and speed mixing disabled, then run one `10000 ms` arm and compare its onboard trace against the `90 pwm` floor run.

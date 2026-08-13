@@ -77,12 +77,12 @@ The first controller milestone computes a proposed balance output without applyi
 - Safety gates require a healthy sensor read, completed gyro calibration, and pitch within `+/-22 deg`.
 - If a gate fails, the clamped output is forced to zero and `/balance/status` reports `balanceSafetyReason`.
 - Balance motor output is available only through explicit runtime arming. The board starts disarmed after reset.
-- `/balance/arm` requires calibration, healthy sensor reads, pitch inside the configured safe window, and `outputLimit <= 90 pwm`. `/balance/arm?ms=...` adds an optional bounded runtime, clamped by `BALANCE_ARM_MAX_RUNTIME_MS`, for short physical test runs.
+- `/balance/arm` requires calibration, healthy sensor reads, pitch inside the configured safe window, and `outputLimit <= 160 pwm`. `/balance/arm?ms=...` adds an optional bounded runtime, clamped by `BALANCE_ARM_MAX_RUNTIME_MS`, for short physical test runs. The `160 pwm` ceiling follows a traced floor run that saturated at `90 pwm` and has been validated wheels-up in all four wheel/direction cases plus the balance command path.
 - `/balance/disarm` clears the runtime arm state and queues a motor stop.
 - Motor commands use a one-element latest-value mailbox. Each balance update overwrites any unconsumed prior command so the motor task never executes a FIFO backlog of stale corrections; stop commands use the same overwrite path.
 - `/balance/config` includes `motorSign` so first-motion polarity can be flipped without rebuilding.
 - Manual `/motor/*` diagnostics remain separate from balance telemetry.
-- `/motor/test/signed?left=...&right=...&ms=...` provides a balance-disarmed characterization pulse bounded to `+/-90 pwm` and `600 ms`; requests are rejected while balance output is armed.
+- `/motor/test/signed?left=...&right=...&ms=...` provides a balance-disarmed characterization pulse bounded to `+/-160 pwm` and `600 ms`; requests are rejected while balance output is armed.
 - `/motor/measurement` reports the PWM values and timestamp most recently applied by the motor task together with an immediate snapshot of both raw encoder counters. This separates command-application delay from motor deadband and mechanical startup delay.
 - Encoders are initialized by the motor task and exposed at `/encoder/status`.
 - Encoder speed telemetry uses Elegoo's 40 ms speed-window shape: left/right pulse deltas are averaged into `combinedSpeedPulses`, then filtered as `old * 0.7 + sample * 0.3`.
