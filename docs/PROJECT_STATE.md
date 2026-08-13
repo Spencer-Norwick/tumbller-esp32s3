@@ -3,12 +3,12 @@
 Last updated: 2026-08-12
 Repository: `tumbller-esp32s3`
 Branch: `feature/self-balancing-sensor-validation`
-Validated source baseline: `3ac079b fix(balance): expose responsive angle saturation` plus the pending high-rate trace increment
-Last hardware-validated firmware commit: pending high-rate trace increment built, uploaded, and exercised on 2026-08-12
+Validated source baseline: `d82b4fb feat(balance): record high-rate hardware traces`
+Last hardware-validated firmware commit: `d82b4fb feat(balance): record high-rate hardware traces`
 
 ## Current Objective
 
-Run the physically validated responsive angle-only profile wheels-down under the slack overhead tether, using the onboard high-rate trace to diagnose the result before changing gains.
+Increase bounded motor authority from `90` to `160 pwm`, validate the new ceiling wheels-up, and repeat the responsive-profile floor trial without changing gains.
 
 ## Verified State
 
@@ -23,13 +23,14 @@ Run the physically validated responsive angle-only profile wheels-down under the
 - Automated wheels-up characterization measured `0-6 ms` command-application lag and a reliable startup threshold of approximately `40 pwm` in all four side/direction cases. The prior `Kp=10` profile stayed below reliable motor effort until about `4 deg` of proportional error.
 - An initial `Kp=35`, `Kd=0.5` wheels-up run commanded `+45 pwm` at `+1.13 deg`, reversed in both directions, completed 1390 samples, and timed out safely. A subsequent onboard-traced run provided the physical validation below.
 - The onboard 20 ms trace captured 465 armed samples, 13 requested sign reversals, zero requested/applied PWM mismatches, at most 1 ms observed applied-command age, balanced encoder activity, corrected 79.8% saturation evidence during deliberate large rocking, and automatic stop. The operator reported the response was “a lot more responsive.”
+- The first traced wheels-down responsive-profile run produced a growing `-5.7/+14.1/-27.9/+32.0/-44.4 deg` oscillation, saturated for 91.5% of 293 armed samples, and auto-disarmed at 6.25 seconds. Applied PWM followed requests within 1 ms after startup, proving the remaining slow catch is the `90 pwm` floor-load authority limit rather than software lag or reverted configuration.
 - The local dashboard provides runtime tuning, timed-arm profiles, telemetry traces, and immediate disarm/stop controls.
 
 Detailed evidence is in `docs/balancing-experiments.md` and the operating procedure is in `docs/operator-guide.md`.
 
 ## Recent Progress
 
-- Added an onboard 20 ms balance trace and physically validated the measured responsive angle profile (pending commit).
+- Added an onboard 20 ms balance trace and physically validated the measured responsive angle profile (`d82b4fb`).
 - Corrected angle-loop saturation telemetry and installed the measured responsive dashboard profile (`3ac079b`).
 - Added bounded signed-motor characterization and applied-output telemetry, then completed all 28 wheels-up cases (`59cf51b`).
 - Replaced the motor command FIFO with a latest-value mailbox so stale corrections cannot accumulate (`45cef66`).
@@ -56,8 +57,8 @@ Detailed evidence is in `docs/balancing-experiments.md` and the operating proced
 
 ## Active Problems
 
-- Stable wheels-down self-balancing has not yet been demonstrated with the responsive profile.
-- The deliberate wheels-up rocking run saturated for 79.8% of armed trace samples; floor-run saturation must be evaluated separately.
+- Stable wheels-down self-balancing has not yet been demonstrated.
+- The first responsive-profile floor run was authority-limited at `90 pwm`, with 91.5% saturation and growing oscillation before angle-gate disarm.
 - Encoder direction is inferred from output sign, so it cannot independently detect wheel reversal or external wheel motion.
 - Hardware-independent mixer and characterization logic have host regression tests; there are still no on-device PlatformIO unit tests.
 
@@ -71,6 +72,6 @@ Detailed evidence is in `docs/balancing-experiments.md` and the operating proced
 
 ## Next Action
 
-1. Put the robot wheels-down under the slack overhead tether and recalibrate upright.
-2. Apply `Kp=35`, `Ki=0`, `Kd=0.5`, limit `90 pwm`, max angle `45 deg`, speed mixing disabled, and arm for `10000 ms`.
-3. Download `/balance/trace` immediately after the run and classify catch, oscillation, and saturation before changing gains.
+1. Raise the arm and motor-characterization ceiling to `160 pwm` without changing the responsive controller gains.
+2. Validate four bounded `160 pwm` side/direction pulses and one short responsive-profile reversal run wheels-up.
+3. Repeat the `10000 ms` wheels-down slack-tether trial and compare peak growth and saturation against the `90 pwm` trace.

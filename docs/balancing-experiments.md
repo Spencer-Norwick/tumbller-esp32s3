@@ -564,3 +564,15 @@ Result: The trace captured `465` armed samples over `9991 ms` plus five post-sto
 Takeaway: The responsive `Kp=35`, `Kd=0.5` angle profile is now physically validated wheels-up. The trace recorder and saturation fix did not alter the control law; they prove that reversals reach the motor task without software delay. The improvement over the earlier low-gain behavior comes from crossing the measured motor startup threshold near upright. The high saturation fraction belongs to this deliberately large wheels-up rocking run and must be reevaluated during the floor trial rather than treated as acceptable steady balance behavior.
 
 Next action: Put the robot wheels-down under the slack overhead tether, recalibrate upright, apply the same responsive angle-only profile, and run one `10000 ms` floor trial. Classify whether it catches, oscillates, or saturates, then read `/balance/trace` before changing gains.
+
+## 2026-08-12: Responsive Profile First Traced Floor Trial
+
+Goal: Determine whether the wheels-up-validated responsive angle profile can catch the robot on the floor under the slack overhead tether.
+
+Setup: Wheels-down, tether slack at upright, stationary upright gyro calibration, `Kp=35`, `Ki=0`, `Kd=0.5`, limit `90 pwm`, max angle `45 deg`, speed mixing disabled, and a requested `10000 ms` arm. Firmware was `d82b4fb` with the onboard `20 ms` trace. The operator fully released the robot.
+
+Result: The run did not balance and auto-disarmed after `6252 ms` when estimated pitch approached the `-45 deg` angle gate. The growing oscillation included approximately `-5.7`, `+14.1`, `-27.9`, `+32.0`, and `-44.4 deg` peaks. The controller changed requested sign four times and motor-task-applied PWM matched requested PWM in `292/293` armed trace samples; after the one initial startup sample, maximum observed applied-command age was `1 ms`. The controller saturated for `268/293` armed samples (`91.5%`). Raw requested output reached about `-1603` to `+1166 pwm` but was clipped to `+/-90 pwm`. Encoders gained left `1201` and right `1126` pulses before disarm. The operator reported that it seemed slow again.
+
+Takeaway: No controller setting reverted and there is no material software command delay. Free-spinning wheels-up response hid the floor-load authority limit. The floor run is actuator-limited at the current `90 pwm` ceiling; adding proportional gain cannot help while output is already clipped. The growing alternating peaks classify this run as an under-authority unstable oscillation, not a successful catch.
+
+Next action: Raise the bounded arm and characterization ceiling to `160 pwm` while retaining the same gains, angle gate, timed arm, sensor gates, latest-command mailbox, and explicit stop. Validate `160 pwm` in all four wheel/direction cases wheels-up, then run a short wheels-up responsive-profile reversal test before repeating the tethered floor trial. Change authority only so its effect is identifiable.
