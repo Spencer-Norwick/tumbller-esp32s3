@@ -8,7 +8,7 @@ Last hardware-validated firmware commit: `86af765`, exercised wheels-up and whee
 
 ## Current Objective
 
-Reduce the overdriven floor response while retaining enough motor reserve to catch the robot.
+Add wheel-speed damping to stop the angle-only controller from racing between tether boundaries.
 
 ## Verified State
 
@@ -26,6 +26,7 @@ Reduce the overdriven floor response while retaining enough motor reserve to cat
 - The first traced wheels-down responsive-profile run produced a growing `-5.7/+14.1/-27.9/+32.0/-44.4 deg` oscillation, saturated for 91.5% of 293 armed samples, and auto-disarmed at 6.25 seconds. Applied PWM followed requests within 1 ms after startup, proving the remaining slow catch is the `90 pwm` floor-load authority limit rather than software lag or reverted configuration.
 - The `160 pwm` ceiling passed all four bounded wheel/direction cases with `0-4 ms` application lag and `29-41 ms` first motion. A five-second wheels-up controller run captured two reversals, zero requested/applied mismatches, balanced `2075/2039` encoder gains, and timed stop.
 - The first `160 pwm` floor run at `Kp=35`, `Kd=0.5` auto-disarmed at the angle gate after approximately `2.87 s`; it saturated `349/400` samples (`87.3%`) and the operator observed abrupt tire slip and jerky motion. The trace confirms an overdriven, underdamped response rather than command delay.
+- Reducing `Kp` to `20` lowered saturation to `66.4%` but still hit the angle gate after approximately `2.18 s`. The trace and operator observation show that the angle-only loop keeps racing while wheel speed accumulates, then reverses too late. Encoder gains were strongly asymmetric at about `1811/1202` despite identical commands.
 - The local dashboard provides runtime tuning, timed-arm profiles, telemetry traces, and immediate disarm/stop controls.
 
 Detailed evidence is in `docs/balancing-experiments.md` and the operating procedure is in `docs/operator-guide.md`.
@@ -60,7 +61,8 @@ Detailed evidence is in `docs/balancing-experiments.md` and the operating proced
 ## Active Problems
 
 - Stable wheels-down self-balancing has not yet been demonstrated.
-- `160 pwm` supplies ample wheel motion but the `Kp=35` profile applies it too abruptly to preserve traction or catch the robot.
+- Angle-only control remains underdamped across the tested authority/gain range; it needs active wheel-speed damping rather than another proportional-gain adjustment.
+- Floor-run left/right encoder activity is strongly asymmetric despite balanced wheels-up characterization, consistent with tire slip or unequal traction.
 - Encoder direction is inferred from output sign, so it cannot independently detect wheel reversal or external wheel motion.
 - Hardware-independent mixer and characterization logic have host regression tests; there are still no on-device PlatformIO unit tests.
 
@@ -75,5 +77,5 @@ Detailed evidence is in `docs/balancing-experiments.md` and the operating proced
 ## Next Action
 
 1. Return the robot upright under the slack overhead tether and recalibrate stationary.
-2. Change only proportional gain to `Kp=20`, retaining `Ki=0`, `Kd=0.5`, limit `160 pwm`, max angle `45 deg`, and speed mixing disabled.
-3. Arm for `10000 ms`, then compare onset jerk, tire slip, peak growth, arm duration, and saturation against the `Kp=35` floor trace.
+2. Keep `Kp=20`, `Ki=0`, `Kd=0.5`, limit `160 pwm`, and max angle `45 deg`; enable corrected speed mixing at `speedScale=0.20`.
+3. Arm for `10000 ms`, then compare tether-boundary racing, reversal timing, peak growth, saturation, and left/right encoder activity against the angle-only trace.

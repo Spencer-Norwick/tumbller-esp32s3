@@ -602,3 +602,15 @@ Result: The robot did not balance. It crossed the angle gate and auto-disarmed a
 Takeaway: `160 pwm` provides ample actuator motion but does not stabilize the current `Kp=35` floor profile. The controller reaches full output near `4.6 deg`, breaks traction, and produces a faster underdamped oscillation than the `90 pwm` trial. This is an overdriven, actuator-saturated floor response rather than software latency. Do not repeat this profile unchanged.
 
 Next action: Change only proportional gain from `Kp=35` to `Kp=20`, retaining `Ki=0`, `Kd=0.5`, the `160 pwm` reserve, `45 deg` gate, speed mixing disabled, and the `10000 ms` bounded arm. This moves the reliable-start threshold to about `2 deg` and full proportional output to `8 deg`, testing whether a less abrupt torque rise preserves traction without restoring the old delayed response.
+
+## 2026-08-12: Reduced-Kp 160-PWM Floor Trial
+
+Goal: Determine whether reducing proportional gain from `35` to `20` preserves the available `160 pwm` reserve while avoiding the abrupt, traction-breaking onset of the previous floor trial.
+
+Setup: Wheels-down under the overhead tether, stationary upright gyro calibration, `Kp=20`, `Ki=0`, `Kd=0.5`, limit `160 pwm`, max angle `45 deg`, speed mixing disabled, and a requested `10000 ms` arm. The robot started at approximately `0.17 deg` with zero encoder counts and healthy sensors.
+
+Result: The robot did not balance and auto-disarmed after approximately `2.18 s` at `-47.3 deg`, completing `304` control samples. Saturation fell from the prior `87.3%` to `66.4%`, but the chassis still raced to one tether boundary, reversed after a visible delay, and raced to the other boundary. At full tether extension the tires continued slipping and the wheels spun for roughly another half second. The trace began near `+1.1 deg`, reached approximately `+20.3 deg`, crossed upright around `1.44 s`, and then accelerated through the negative angle gate. Requested and applied PWM matched after the initial sample. Encoder gains were approximately `1811` left and `1202` right despite identical commands.
+
+Takeaway: Lower proportional gain reduced clamp duty but did not address the dominant failure: the angle-only controller continues driving rapidly while wheel speed accumulates, so it brakes too late and reverses only after a large excursion. Motor authority and proportional onset have now been bracketed; further angle-only gain changes are unlikely to produce a stable catch. The persistent floor-only encoder asymmetry also indicates slip or unequal traction rather than the balanced free-wheel motor behavior measured earlier.
+
+Next action: Keep `Kp=20`, `Ki=0`, `Kd=0.5`, limit `160 pwm`, and the `45 deg` gate, then enable the already sign-corrected encoder speed feedback at `speedScale=0.20`. This introduces the missing wheel-speed damping without changing the angle controller and should begin reducing drive within one approximately `56 ms` speed-loop interval.
