@@ -614,3 +614,15 @@ Result: The robot did not balance and auto-disarmed after approximately `2.18 s`
 Takeaway: Lower proportional gain reduced clamp duty but did not address the dominant failure: the angle-only controller continues driving rapidly while wheel speed accumulates, so it brakes too late and reverses only after a large excursion. Motor authority and proportional onset have now been bracketed; further angle-only gain changes are unlikely to produce a stable catch. The persistent floor-only encoder asymmetry also indicates slip or unequal traction rather than the balanced free-wheel motor behavior measured earlier.
 
 Next action: Keep `Kp=20`, `Ki=0`, `Kd=0.5`, limit `160 pwm`, and the `45 deg` gate, then enable the already sign-corrected encoder speed feedback at `speedScale=0.20`. This introduces the missing wheel-speed damping without changing the angle controller and should begin reducing drive within one approximately `56 ms` speed-loop interval.
+
+## 2026-08-12: Strong Speed-Damping Floor Trial
+
+Goal: Test whether corrected encoder speed feedback stops the angle-only controller from racing and spinning its wheels at the tether boundaries.
+
+Setup: After a power cycle recovered an IMU that had become stuck at all-zero raw readings, the robot was calibrated upright. The held upright pitch of `-5.19 deg` was applied as the runtime setpoint, producing approximately zero requested output before release. Runtime control was `Kp=20`, `Ki=0`, `Kd=0.5`, limit `160 pwm`, max angle `45 deg`, speed mixing enabled, and `speedScale=0.20`.
+
+Result: The robot did not balance and auto-disarmed after approximately `4.0 s` at `-45.9 deg`. It completed `556` controller samples and raw-angle saturation fell to `111/556` (`20.0%`). Speed feedback materially reduced drive: during one positive excursion, an angle request near `+260 pwm` became about `+130 pwm`; near the final negative angle limit, a raw request near `-843 pwm`, angle-clamped to `-160 pwm`, became approximately `-72 pwm`. The operator observed less racing and tire slip, confirming the damping acted physically, but the chassis still moved quickly to one tether boundary and then shot toward the other. Encoder totals reached roughly `876` left and `483` right before the angle trip, preserving the large floor-only asymmetry.
+
+Takeaway: Corrected speed feedback addresses the observed wheel runaway, but `speedScale=0.20` removes too much catch authority at large angle. The useful damping range is now bracketed between `0` (runaway and late reversal) and `0.20` (less slip but over-braked). The tighter tether geometry installed after this run will reduce available angle and linear runway; it is acceptable as a tuning catch fixture but any taut-tether interval cannot count as self-balancing evidence.
+
+Next action: Keep all angle-controller settings and the calibrated setpoint unchanged, reduce only `speedScale` from `0.20` to `0.10`, recalibrate upright, and repeat the bounded floor trial. Compare wheel slip, mixed PWM at large error, reversal timing, angle-trip duration, and whether the tighter tether supports the chassis.

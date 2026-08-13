@@ -8,7 +8,7 @@ Last hardware-validated firmware commit: `86af765`, exercised wheels-up and whee
 
 ## Current Objective
 
-Add wheel-speed damping to stop the angle-only controller from racing between tether boundaries.
+Bracket wheel-speed damping so it reduces tire slip without removing the authority needed to catch the chassis.
 
 ## Verified State
 
@@ -27,6 +27,7 @@ Add wheel-speed damping to stop the angle-only controller from racing between te
 - The `160 pwm` ceiling passed all four bounded wheel/direction cases with `0-4 ms` application lag and `29-41 ms` first motion. A five-second wheels-up controller run captured two reversals, zero requested/applied mismatches, balanced `2075/2039` encoder gains, and timed stop.
 - The first `160 pwm` floor run at `Kp=35`, `Kd=0.5` auto-disarmed at the angle gate after approximately `2.87 s`; it saturated `349/400` samples (`87.3%`) and the operator observed abrupt tire slip and jerky motion. The trace confirms an overdriven, underdamped response rather than command delay.
 - Reducing `Kp` to `20` lowered saturation to `66.4%` but still hit the angle gate after approximately `2.18 s`. The trace and operator observation show that the angle-only loop keeps racing while wheel speed accumulates, then reverses too late. Encoder gains were strongly asymmetric at about `1811/1202` despite identical commands.
+- Enabling corrected speed feedback at `speedScale=0.20` reduced physical racing/slip and raw-angle saturation to `20.0%`, but over-braked the final catch: near the negative angle limit it reduced a `-160 pwm` angle command to about `-72 pwm`. The run reached the angle gate after roughly `4.0 s`.
 - The local dashboard provides runtime tuning, timed-arm profiles, telemetry traces, and immediate disarm/stop controls.
 
 Detailed evidence is in `docs/balancing-experiments.md` and the operating procedure is in `docs/operator-guide.md`.
@@ -61,8 +62,9 @@ Detailed evidence is in `docs/balancing-experiments.md` and the operating proced
 ## Active Problems
 
 - Stable wheels-down self-balancing has not yet been demonstrated.
-- Angle-only control remains underdamped across the tested authority/gain range; it needs active wheel-speed damping rather than another proportional-gain adjustment.
+- Angle-only control remains underdamped; `speedScale=0.20` proves active wheel-speed damping helps traction but is too strong for the catch, so the next bracket is `0.10`.
 - Floor-run left/right encoder activity is strongly asymmetric despite balanced wheels-up characterization, consistent with tire slip or unequal traction.
+- The operator shortened the overhead tether after the `0.20` run. This reduces angle excursions but also wheel runway; taut-tether behavior is useful only as tuning-fixture evidence, not proof of balance.
 - Encoder direction is inferred from output sign, so it cannot independently detect wheel reversal or external wheel motion.
 - Hardware-independent mixer and characterization logic have host regression tests; there are still no on-device PlatformIO unit tests.
 
@@ -76,6 +78,6 @@ Detailed evidence is in `docs/balancing-experiments.md` and the operating proced
 
 ## Next Action
 
-1. Return the robot upright under the slack overhead tether and recalibrate stationary.
-2. Keep `Kp=20`, `Ki=0`, `Kd=0.5`, limit `160 pwm`, and max angle `45 deg`; enable corrected speed mixing at `speedScale=0.20`.
-3. Arm for `10000 ms`, then compare tether-boundary racing, reversal timing, peak growth, saturation, and left/right encoder activity against the angle-only trace.
+1. Return the robot upright under the adjusted overhead tether and recalibrate stationary.
+2. Keep `Kp=20`, `Ki=0`, `Kd=0.5`, limit `160 pwm`, and max angle `45 deg`; use corrected speed mixing at `speedScale=0.10`.
+3. Arm for `10000 ms`, then compare wheel slip, reversal timing, angle-trip duration, and tether contact against both the angle-only and `0.20` traces.
