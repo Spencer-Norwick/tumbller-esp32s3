@@ -1,0 +1,860 @@
+#include "balance_task.hpp"
+
+#include <Wire.h>
+#include <cstring>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
+
+#include "../config.hpp"
+#include "../../include/control_mix.hpp"
+#include "../drivers/KalmanPitch.hpp"
+#include "motor_task.hpp"
+#include "task_common.hpp"
+
+namespace {
+constexpr float AXIS_CANDIDATE_FILTER_ALPHA = 0.10f;
+Mpu6050Imu g_imu;
+KalmanPitch g_pitchFilter;
+BalanceTelemetry g_telemetry;
+BalanceControlConfig g_balanceConfig = {
+    BALANCE_ANGLE_SETPOINT_DEG,
+    BALANCE_PID_KP,
+    BALANCE_PID_KI,
+    BALANCE_PID_KD,
+    BALANCE_PID_OUTPUT_LIMIT,
+    BALANCE_CONTROL_MAX_ABS_ANGLE_DEG,
+    BALANCE_MOTOR_SIGN,
+    BALANCE_SPEED_MIX_ENABLED != 0,
+    BALANCE_SPEED_MIX_SCALE,
+};
+portMUX_TYPE g_telemetryMux = portMUX_INITIALIZER_UNLOCKED;
+portMUX_TYPE g_configMux = portMUX_INITIALIZER_UNLOCKED;
+portMUX_TYPE g_armMux = portMUX_INITIALIZER_UNLOCKED;
+portMUX_TYPE g_traceMux = portMUX_INITIALIZER_UNLOCKED;
+BalanceTraceSample g_traceSamples[BALANCE_TRACE_CAPACITY];
+uint16_t g_traceStart = 0;
+uint16_t g_traceCount = 0;
+uint32_t g_traceTotalSamples = 0;
+bool g_traceRecording = false;
+uint8_t g_tracePostStopSamplesRemaining = 0;
+unsigned long g_traceLastSampleMs = 0;
+volatile bool g_calibrationRequested = false;
+bool g_balanceMotorArmed = false;
+unsigned long g_balanceArmStartedAtMs = 0;
+unsigned long g_balanceArmTimeoutMs = 0;
+uint32_t g_balanceRunSampleCount = 0;
+uint32_t g_balanceMixedSaturationCount = 0;
+unsigned long g_speedLoopLastEncoderLeft = 0;
+unsigned long g_speedLoopLastEncoderRight = 0;
+uint8_t g_speedLoopPeriodCount = 0;
+int g_speedLoopLastDirectionSign = 0;
+uint32_t g_speedLoopResetCount = 0;
+
+void balanceTask(void *pvParameters);
+void publishTelemetry(const BalanceTelemetry &telemetry);
+void copyTelemetry(BalanceTelemetry &out);
+void copyConfig(BalanceControlConfig &out);
+struct ArmRuntime {
+  bool armed = false;
+  unsigned long startedAtMs = 0;
+  unsigned long timeoutMs = 0;
+  uint32_t sampleCount = 0;
+  uint32_t saturationCount = 0;
+};
+ArmRuntime copyArmRuntime();
+void applyArmRuntimeToTelemetry(BalanceTelemetry &telemetry, const ArmRuntime &runtime);
+void recordArmSample(bool saturated);
+void setArmState(bool armed, unsigned long timeoutMs = 0);
+void setError(BalanceTelemetry &telemetry, const char *message);
+void setBalanceSafetyReason(BalanceTelemetry &telemetry, const char *message);
+void copyReason(char *reason, size_t reasonSize, const char *message);
+void resetSpeedLoopState(BalanceTelemetry &telemetry, const char *reason, unsigned long encoderLeft,
+                         unsigned long encoderRight);
+bool readImuLocked(ImuRawSample &sample, const char *&error);
+bool runPitchGyroCalibration(float &gyroBiasRaw, BalanceTelemetry &telemetry);
+float smoothAngleDeg(float previousDeg, float nextDeg, float alpha);
+void computeAxisCandidates(const ImuRawSample &sample, BalanceTelemetry &telemetry);
+void computeBalanceControl(BalanceTelemetry &telemetry, float dtSeconds);
+void computeSpeedLoopPreview(BalanceTelemetry &telemetry);
+void computeSpeedMixedOutput(BalanceTelemetry &telemetry);
+void applyBalanceMotorOutput(BalanceTelemetry &telemetry);
+void applyConfigToTelemetry(BalanceTelemetry &telemetry, const BalanceControlConfig &config);
+float clampFloat(float value, float minValue, float maxValue);
+int clampPwm(float value);
+void queueMotorStop();
+void emitSerialTelemetry(const BalanceTelemetry &telemetry);
+void startBalanceTrace();
+void recordBalanceTrace(const BalanceTelemetry &telemetry);
+}  // namespace
+
+void balance_task_start() {
+  xTaskCreatePinnedToCore(balanceTask, "balanceTask", 4096, nullptr, 1, nullptr, 1);
+}
+
+bool balance_request_calibration() {
+  g_calibrationRequested = true;
+  return true;
+}
+
+void balance_get_status(BalanceTelemetry &out) {
+  copyTelemetry(out);
+}
+
+void balance_get_raw(BalanceTelemetry &out) {
+  copyTelemetry(out);
+}
+
+void balance_get_config(BalanceControlConfig &out) {
+  copyConfig(out);
+}
+
+void balance_set_config(const BalanceControlConfig &config) {
+  taskENTER_CRITICAL(&g_configMux);
+  g_balanceConfig = config;
+  taskEXIT_CRITICAL(&g_configMux);
+}
+
+bool balance_request_motor_arm(char *reason, size_t reasonSize, unsigned long timeoutMs) {
+#if BALANCE_MOTOR_OUTPUT_AVAILABLE == 0
+  copyReason(reason, reasonSize, "motor output unavailable");
+  return false;
+#else
+  BalanceTelemetry telemetry;
+  BalanceControlConfig config;
+  copyTelemetry(telemetry);
+  copyConfig(config);
+
+  if (!telemetry.lastReadOk) {
+    copyReason(reason, reasonSize, "sensor read failed");
+    return false;
+  }
+  if (!telemetry.calibrated) {
+    copyReason(reason, reasonSize, "not calibrated");
+    return false;
+  }
+  if (fabsf(telemetry.pitchDeg) > config.maxAbsAngleDeg) {
+    copyReason(reason, reasonSize, "angle outside safe window");
+    return false;
+  }
+  if (config.outputLimit > BALANCE_ARM_MAX_OUTPUT_LIMIT) {
+    copyReason(reason, reasonSize, "output limit too high for arm");
+    return false;
+  }
+
+  setArmState(true, timeoutMs);
+  copyReason(reason, reasonSize, timeoutMs > 0 ? "armed timed" : "armed");
+  return true;
+#endif
+}
+
+void balance_request_motor_disarm() {
+  setArmState(false);
+  queueMotorStop();
+}
+
+void balance_get_trace_meta(BalanceTraceMeta &out) {
+  taskENTER_CRITICAL(&g_traceMux);
+  out.count = g_traceCount;
+  out.capacity = BALANCE_TRACE_CAPACITY;
+  out.samplePeriodMs = BALANCE_TRACE_SAMPLE_MS;
+  out.totalSamples = g_traceTotalSamples;
+  out.recording = g_traceRecording;
+  taskEXIT_CRITICAL(&g_traceMux);
+}
+
+bool balance_get_trace_sample(uint16_t chronologicalIndex, BalanceTraceSample &out) {
+  taskENTER_CRITICAL(&g_traceMux);
+  if (chronologicalIndex >= g_traceCount) {
+    taskEXIT_CRITICAL(&g_traceMux);
+    return false;
+  }
+  const uint16_t physicalIndex = (g_traceStart + chronologicalIndex) % BALANCE_TRACE_CAPACITY;
+  out = g_traceSamples[physicalIndex];
+  taskEXIT_CRITICAL(&g_traceMux);
+  return true;
+}
+
+namespace {
+void balanceTask(void *pvParameters) {
+  (void)pvParameters;
+
+  BalanceTelemetry telemetry;
+  telemetry.imuAddress = IMU_I2C_ADDR;
+  BalanceControlConfig config;
+  copyConfig(config);
+  applyConfigToTelemetry(telemetry, config);
+  setBalanceSafetyReason(telemetry, "not calibrated");
+
+  if (i2c_lock(pdMS_TO_TICKS(500))) {
+    telemetry.imuReady = g_imu.begin(Wire, IMU_I2C_ADDR);
+    telemetry.whoAmI = g_imu.whoAmI();
+    telemetry.whoAmICompatible = g_imu.whoAmICompatible();
+    setError(telemetry, g_imu.lastError());
+    i2c_unlock();
+  } else {
+    telemetry.imuReady = false;
+    setError(telemetry, "i2c lock timeout");
+  }
+  publishTelemetry(telemetry);
+
+  unsigned long lastMicros = micros();
+  for (;;) {
+    if (g_calibrationRequested) {
+      g_calibrationRequested = false;
+      telemetry.calibrationInProgress = true;
+      publishTelemetry(telemetry);
+      float gyroBiasRaw = telemetry.gyroBiasRaw;
+      telemetry.calibrated = runPitchGyroCalibration(gyroBiasRaw, telemetry);
+      telemetry.gyroBiasRaw = gyroBiasRaw;
+      telemetry.calibrationInProgress = false;
+      g_pitchFilter.reset(telemetry.accelPitchDeg);
+      telemetry.balanceIntegralError = 0.0f;
+      telemetry.speedLoopFilter = 0.0f;
+      telemetry.speedLoopIntegral = 0.0f;
+      telemetry.speedLoopOutput = 0.0f;
+      telemetry.speedLoopSignedCommand = 0.0f;
+      telemetry.speedLoopDirectionSign = 0;
+      telemetry.speedLoopResetCount = ++g_speedLoopResetCount;
+      copyReason(telemetry.speedLoopResetReason, sizeof(telemetry.speedLoopResetReason), "calibrated");
+      telemetry.speedLoopSampleCount = 0;
+      telemetry.speedLoopReady = false;
+      setArmState(false);
+      queueMotorStop();
+      publishTelemetry(telemetry);
+    }
+
+    const unsigned long nowMicros = micros();
+    float dtSeconds = (nowMicros - lastMicros) / 1000000.0f;
+    lastMicros = nowMicros;
+    if (dtSeconds <= 0.0f || dtSeconds > 0.1f) {
+      dtSeconds = BALANCE_SENSOR_LOOP_MS / 1000.0f;
+    }
+
+    ImuRawSample sample;
+    const char *readError = nullptr;
+    const bool readOk = telemetry.imuReady && readImuLocked(sample, readError);
+    telemetry.lastReadOk = readOk;
+    telemetry.updatedAtMs = millis();
+    telemetry.loopDtMs = dtSeconds * 1000.0f;
+    telemetry.loopCount++;
+
+    if (readOk) {
+      telemetry.raw = sample;
+      computeAxisCandidates(sample, telemetry);
+      const float gyroXRateDps = static_cast<float>(sample.gx) / 131.0f;
+      const float gyroRateDps = (sample.gy - telemetry.gyroBiasRaw) / 131.0f;
+      telemetry.gyroRateDps = gyroRateDps;
+      telemetry.gyroXRateDps = gyroXRateDps;
+      telemetry.gyroYRateDps = gyroRateDps;
+      telemetry.gyroZRateDps = static_cast<float>(sample.gz) / 131.0f;
+      g_pitchFilter.update(telemetry.accelPitchDeg, gyroRateDps, dtSeconds);
+      telemetry.pitchDeg = g_pitchFilter.angleDeg();
+      computeBalanceControl(telemetry, dtSeconds);
+      computeSpeedLoopPreview(telemetry);
+      computeSpeedMixedOutput(telemetry);
+      setError(telemetry, "ok");
+    } else {
+      telemetry.failedReadCount++;
+      computeBalanceControl(telemetry, dtSeconds);
+      computeSpeedLoopPreview(telemetry);
+      computeSpeedMixedOutput(telemetry);
+      setError(telemetry, telemetry.imuReady ? readError : "imu not ready");
+    }
+
+    applyBalanceMotorOutput(telemetry);
+    recordBalanceTrace(telemetry);
+    publishTelemetry(telemetry);
+    emitSerialTelemetry(telemetry);
+    vTaskDelay(pdMS_TO_TICKS(BALANCE_SENSOR_LOOP_MS));
+  }
+}
+
+void publishTelemetry(const BalanceTelemetry &telemetry) {
+  taskENTER_CRITICAL(&g_telemetryMux);
+  g_telemetry = telemetry;
+  taskEXIT_CRITICAL(&g_telemetryMux);
+}
+
+void copyTelemetry(BalanceTelemetry &out) {
+  taskENTER_CRITICAL(&g_telemetryMux);
+  out = g_telemetry;
+  taskEXIT_CRITICAL(&g_telemetryMux);
+}
+
+void copyConfig(BalanceControlConfig &out) {
+  taskENTER_CRITICAL(&g_configMux);
+  out = g_balanceConfig;
+  taskEXIT_CRITICAL(&g_configMux);
+}
+
+ArmRuntime copyArmRuntime() {
+  taskENTER_CRITICAL(&g_armMux);
+  ArmRuntime runtime;
+  runtime.armed = g_balanceMotorArmed;
+  runtime.startedAtMs = g_balanceArmStartedAtMs;
+  runtime.timeoutMs = g_balanceArmTimeoutMs;
+  runtime.sampleCount = g_balanceRunSampleCount;
+  runtime.saturationCount = g_balanceMixedSaturationCount;
+  taskEXIT_CRITICAL(&g_armMux);
+  return runtime;
+}
+
+void applyArmRuntimeToTelemetry(BalanceTelemetry &telemetry, const ArmRuntime &runtime) {
+  telemetry.balanceMotorOutputArmed = runtime.armed;
+  telemetry.balanceMotorOutputEnabled = telemetry.balanceMotorOutputAvailable && runtime.armed;
+  telemetry.balanceArmStartedAtMs = runtime.startedAtMs;
+  telemetry.balanceArmTimeoutMs = runtime.timeoutMs;
+  telemetry.balanceRunSampleCount = runtime.sampleCount;
+  telemetry.balanceMixedOutputSaturationCount = runtime.saturationCount;
+  telemetry.balanceMixedOutputSaturationRatio =
+      runtime.sampleCount > 0 ? static_cast<float>(runtime.saturationCount) / static_cast<float>(runtime.sampleCount)
+                              : 0.0f;
+
+  if (runtime.armed && runtime.startedAtMs > 0) {
+    const unsigned long elapsedMs = millis() - runtime.startedAtMs;
+    telemetry.balanceArmElapsedMs = elapsedMs;
+    telemetry.balanceArmRemainingMs =
+        runtime.timeoutMs > elapsedMs ? runtime.timeoutMs - elapsedMs : 0;
+  } else {
+    telemetry.balanceArmElapsedMs = 0;
+    telemetry.balanceArmRemainingMs = 0;
+  }
+}
+
+void recordArmSample(bool saturated) {
+  taskENTER_CRITICAL(&g_armMux);
+  if (g_balanceMotorArmed) {
+    g_balanceRunSampleCount++;
+    if (saturated) {
+      g_balanceMixedSaturationCount++;
+    }
+  }
+  taskEXIT_CRITICAL(&g_armMux);
+}
+
+void setArmState(bool armed, unsigned long timeoutMs) {
+  bool traceShouldStart = false;
+  taskENTER_CRITICAL(&g_armMux);
+  g_balanceMotorArmed = armed;
+  if (armed) {
+    g_balanceArmStartedAtMs = millis();
+    g_balanceArmTimeoutMs = timeoutMs;
+    g_balanceRunSampleCount = 0;
+    g_balanceMixedSaturationCount = 0;
+    traceShouldStart = true;
+  } else {
+    g_balanceArmTimeoutMs = 0;
+  }
+  taskEXIT_CRITICAL(&g_armMux);
+  if (traceShouldStart) {
+    startBalanceTrace();
+  }
+}
+
+void startBalanceTrace() {
+  taskENTER_CRITICAL(&g_traceMux);
+  g_traceStart = 0;
+  g_traceCount = 0;
+  g_traceTotalSamples = 0;
+  g_traceRecording = true;
+  g_tracePostStopSamplesRemaining = 5;
+  g_traceLastSampleMs = 0;
+  taskEXIT_CRITICAL(&g_traceMux);
+}
+
+void recordBalanceTrace(const BalanceTelemetry &telemetry) {
+  const unsigned long nowMs = millis();
+  taskENTER_CRITICAL(&g_traceMux);
+  const bool shouldRecord = g_traceRecording &&
+                            (g_traceLastSampleMs == 0 || nowMs - g_traceLastSampleMs >= BALANCE_TRACE_SAMPLE_MS);
+  taskEXIT_CRITICAL(&g_traceMux);
+  if (!shouldRecord) {
+    return;
+  }
+
+  MotorAppliedTelemetry applied;
+  motor_get_applied_status(applied);
+  unsigned long encoderLeft = 0;
+  unsigned long encoderRight = 0;
+  motor_snapshot_encoder_counts(encoderLeft, encoderRight);
+
+  BalanceTraceSample sample;
+  sample.atMs = nowMs;
+  sample.accelPitchDeg = telemetry.accelPitchDeg;
+  sample.pitchDeg = telemetry.pitchDeg;
+  sample.gyroRateDps = telemetry.gyroRateDps;
+  sample.outputRaw = telemetry.balanceOutputRaw;
+  sample.outputClamped = telemetry.balanceMixedOutputClamped;
+  sample.requestedLeftPwm = telemetry.balanceMotorOutputArmed ? telemetry.balanceLeftPwm : 0;
+  sample.requestedRightPwm = telemetry.balanceMotorOutputArmed ? telemetry.balanceRightPwm : 0;
+  sample.appliedLeftPwm = applied.leftPwm;
+  sample.appliedRightPwm = applied.rightPwm;
+  sample.appliedAtMs = applied.updatedAtMs;
+  sample.appliedSequence = applied.sequence;
+  sample.encoderLeft = encoderLeft;
+  sample.encoderRight = encoderRight;
+  sample.armed = telemetry.balanceMotorOutputArmed;
+  sample.safetyOk = telemetry.balanceControlSafetyOk;
+  sample.saturated = telemetry.balanceMixedOutputSaturated;
+
+  taskENTER_CRITICAL(&g_traceMux);
+  uint16_t writeIndex = (g_traceStart + g_traceCount) % BALANCE_TRACE_CAPACITY;
+  if (g_traceCount == BALANCE_TRACE_CAPACITY) {
+    writeIndex = g_traceStart;
+    g_traceStart = (g_traceStart + 1) % BALANCE_TRACE_CAPACITY;
+  } else {
+    g_traceCount++;
+  }
+  g_traceSamples[writeIndex] = sample;
+  g_traceTotalSamples++;
+  g_traceLastSampleMs = nowMs;
+  if (!telemetry.balanceMotorOutputArmed) {
+    if (g_tracePostStopSamplesRemaining > 0) {
+      g_tracePostStopSamplesRemaining--;
+    }
+    if (g_tracePostStopSamplesRemaining == 0) {
+      g_traceRecording = false;
+    }
+  }
+  taskEXIT_CRITICAL(&g_traceMux);
+}
+
+void setError(BalanceTelemetry &telemetry, const char *message) {
+  std::strncpy(telemetry.lastError, message, sizeof(telemetry.lastError) - 1);
+  telemetry.lastError[sizeof(telemetry.lastError) - 1] = '\0';
+}
+
+void setBalanceSafetyReason(BalanceTelemetry &telemetry, const char *message) {
+  std::strncpy(telemetry.balanceSafetyReason, message, sizeof(telemetry.balanceSafetyReason) - 1);
+  telemetry.balanceSafetyReason[sizeof(telemetry.balanceSafetyReason) - 1] = '\0';
+}
+
+void copyReason(char *reason, size_t reasonSize, const char *message) {
+  if (!reason || reasonSize == 0) {
+    return;
+  }
+  std::strncpy(reason, message, reasonSize - 1);
+  reason[reasonSize - 1] = '\0';
+}
+
+void resetSpeedLoopState(BalanceTelemetry &telemetry, const char *reason, unsigned long encoderLeft,
+                         unsigned long encoderRight) {
+  const bool stateChanged = telemetry.speedLoopDeltaLeft != 0 || telemetry.speedLoopDeltaRight != 0 ||
+                            telemetry.speedLoopFilter != 0.0f || telemetry.speedLoopIntegral != 0.0f ||
+                            telemetry.speedLoopOutput != 0.0f ||
+                            std::strncmp(telemetry.speedLoopResetReason, reason,
+                                         sizeof(telemetry.speedLoopResetReason)) != 0;
+
+  g_speedLoopLastEncoderLeft = encoderLeft;
+  g_speedLoopLastEncoderRight = encoderRight;
+  g_speedLoopLastDirectionSign = telemetry.speedLoopDirectionSign;
+  g_speedLoopPeriodCount = 0;
+  telemetry.speedLoopReady = true;
+  telemetry.speedLoopDeltaLeft = 0;
+  telemetry.speedLoopDeltaRight = 0;
+  telemetry.speedLoopSignedCommand = 0.0f;
+  telemetry.speedLoopDirectionSign = 0;
+  telemetry.speedLoopCarSpeed = 0.0f;
+  telemetry.speedLoopFilter = 0.0f;
+  telemetry.speedLoopIntegral = 0.0f;
+  telemetry.speedLoopOutput = 0.0f;
+  if (stateChanged) {
+    telemetry.speedLoopResetCount = ++g_speedLoopResetCount;
+    copyReason(telemetry.speedLoopResetReason, sizeof(telemetry.speedLoopResetReason), reason);
+  }
+}
+
+bool readImuLocked(ImuRawSample &sample, const char *&error) {
+  if (!i2c_lock(pdMS_TO_TICKS(20))) {
+    error = "i2c lock timeout";
+    return false;
+  }
+  const bool ok = g_imu.readRaw(Wire, sample);
+  error = g_imu.lastError();
+  i2c_unlock();
+  return ok;
+}
+
+bool runPitchGyroCalibration(float &gyroBiasRaw, BalanceTelemetry &telemetry) {
+  int64_t pitchGyroSum = 0;
+  int samplesRead = 0;
+
+  for (int i = 0; i < BALANCE_GYRO_CALIBRATION_SAMPLES; i++) {
+    ImuRawSample sample;
+    const char *readError = nullptr;
+    if (!readImuLocked(sample, readError)) {
+      setError(telemetry, readError);
+      return false;
+    }
+    pitchGyroSum += sample.gy;
+    telemetry.raw = sample;
+    computeAxisCandidates(sample, telemetry);
+    samplesRead++;
+    vTaskDelay(pdMS_TO_TICKS(2));
+  }
+
+  if (samplesRead == 0) {
+    setError(telemetry, "no calibration samples");
+    return false;
+  }
+
+  gyroBiasRaw = static_cast<float>(pitchGyroSum) / static_cast<float>(samplesRead);
+  setError(telemetry, "calibrated");
+  return true;
+}
+
+void computeAxisCandidates(const ImuRawSample &sample, BalanceTelemetry &telemetry) {
+  const float ax = static_cast<float>(sample.ax);
+  const float ay = static_cast<float>(sample.ay);
+  const float az = static_cast<float>(sample.az);
+  telemetry.accelAngleAyAzDeg = atan2f(ay, az) * 57.2957795f;
+  telemetry.accelAngleAxAzDeg = atan2f(ax, az) * 57.2957795f;
+  telemetry.accelAngleAxAyDeg = atan2f(ax, ay) * 57.2957795f;
+  telemetry.accelTiltXDeg = atan2f(ax, sqrtf((ay * ay) + (az * az))) * 57.2957795f;
+  if (!telemetry.axisFilterReady) {
+    telemetry.accelAngleAyAzSmoothedDeg = telemetry.accelAngleAyAzDeg;
+    telemetry.accelAngleAxAzSmoothedDeg = telemetry.accelAngleAxAzDeg;
+    telemetry.accelAngleAxAySmoothedDeg = telemetry.accelAngleAxAyDeg;
+    telemetry.accelTiltXSmoothedDeg = telemetry.accelTiltXDeg;
+    telemetry.axisFilterReady = true;
+  } else {
+    telemetry.accelAngleAyAzSmoothedDeg =
+        smoothAngleDeg(telemetry.accelAngleAyAzSmoothedDeg, telemetry.accelAngleAyAzDeg, AXIS_CANDIDATE_FILTER_ALPHA);
+    telemetry.accelAngleAxAzSmoothedDeg =
+        smoothAngleDeg(telemetry.accelAngleAxAzSmoothedDeg, telemetry.accelAngleAxAzDeg, AXIS_CANDIDATE_FILTER_ALPHA);
+    telemetry.accelAngleAxAySmoothedDeg =
+        smoothAngleDeg(telemetry.accelAngleAxAySmoothedDeg, telemetry.accelAngleAxAyDeg, AXIS_CANDIDATE_FILTER_ALPHA);
+    telemetry.accelTiltXSmoothedDeg =
+        smoothAngleDeg(telemetry.accelTiltXSmoothedDeg, telemetry.accelTiltXDeg, AXIS_CANDIDATE_FILTER_ALPHA);
+  }
+  telemetry.accelPitchDeg = telemetry.accelTiltXDeg;
+}
+
+float smoothAngleDeg(float previousDeg, float nextDeg, float alpha) {
+  float delta = nextDeg - previousDeg;
+  while (delta > 180.0f) {
+    delta -= 360.0f;
+  }
+  while (delta < -180.0f) {
+    delta += 360.0f;
+  }
+
+  float smoothed = previousDeg + alpha * delta;
+  while (smoothed > 180.0f) {
+    smoothed -= 360.0f;
+  }
+  while (smoothed <= -180.0f) {
+    smoothed += 360.0f;
+  }
+  return smoothed;
+}
+
+void computeBalanceControl(BalanceTelemetry &telemetry, float dtSeconds) {
+  BalanceControlConfig config;
+  copyConfig(config);
+  applyConfigToTelemetry(telemetry, config);
+  telemetry.balanceAngleErrorDeg = telemetry.pitchDeg - telemetry.balanceSetpointDeg;
+
+  telemetry.balanceControlSafetyOk = false;
+  if (!telemetry.balanceControllerEnabled) {
+    telemetry.balanceIntegralError = 0.0f;
+    setBalanceSafetyReason(telemetry, "controller disabled");
+  } else if (!telemetry.lastReadOk) {
+    telemetry.balanceIntegralError = 0.0f;
+    setBalanceSafetyReason(telemetry, "sensor read failed");
+  } else if (!telemetry.calibrated) {
+    telemetry.balanceIntegralError = 0.0f;
+    setBalanceSafetyReason(telemetry, "not calibrated");
+  } else if (fabsf(telemetry.pitchDeg) > telemetry.balanceMaxAbsAngleDeg) {
+    telemetry.balanceIntegralError = 0.0f;
+    setBalanceSafetyReason(telemetry, "angle outside safe window");
+  } else {
+    telemetry.balanceControlSafetyOk = true;
+    setBalanceSafetyReason(telemetry, "ok");
+    if (telemetry.balanceKi != 0.0f) {
+      telemetry.balanceIntegralError += telemetry.balanceAngleErrorDeg * dtSeconds;
+    } else {
+      telemetry.balanceIntegralError = 0.0f;
+    }
+  }
+
+  telemetry.balancePTerm = telemetry.balanceKp * telemetry.balanceAngleErrorDeg;
+  telemetry.balanceITerm = telemetry.balanceKi * telemetry.balanceIntegralError;
+  telemetry.balanceDTerm = telemetry.balanceKd * telemetry.gyroRateDps;
+  telemetry.balanceOutputRaw = telemetry.balancePTerm + telemetry.balanceITerm + telemetry.balanceDTerm;
+  telemetry.balanceOutputClamped =
+      clampFloat(telemetry.balanceOutputRaw, -telemetry.balanceOutputLimit, telemetry.balanceOutputLimit);
+
+  if (!telemetry.balanceControlSafetyOk) {
+    telemetry.balanceOutputClamped = 0.0f;
+  }
+
+  telemetry.balanceMixedOutputRaw = telemetry.balanceOutputClamped;
+  telemetry.balanceMixedOutputClamped = telemetry.balanceOutputClamped;
+  telemetry.balanceLeftPwm = static_cast<int>(telemetry.balanceMixedOutputClamped);
+  telemetry.balanceRightPwm = static_cast<int>(telemetry.balanceMixedOutputClamped);
+}
+
+void computeSpeedLoopPreview(BalanceTelemetry &telemetry) {
+  EncoderTelemetry encoder;
+  motor_get_encoder_status(encoder);
+  telemetry.encoderTotalLeft = encoder.totalLeft;
+  telemetry.encoderTotalRight = encoder.totalRight;
+
+  if (!encoder.initialized) {
+    telemetry.speedLoopReady = false;
+    resetSpeedLoopState(telemetry, "encoder not initialized", encoder.totalLeft, encoder.totalRight);
+    telemetry.speedLoopReady = false;
+    return;
+  }
+
+  if (!telemetry.balanceMotorOutputArmed) {
+    resetSpeedLoopState(telemetry, "disarmed", encoder.totalLeft, encoder.totalRight);
+    return;
+  }
+
+  if (!telemetry.balanceControlSafetyOk) {
+    resetSpeedLoopState(telemetry, "safety gate", encoder.totalLeft, encoder.totalRight);
+    return;
+  }
+
+  const float commandForDirection = telemetry.speedLoopMixEnabled
+                                        ? control_mix::applySpeedCorrection(
+                                              telemetry.balanceOutputClamped, telemetry.speedLoopOutput,
+                                              telemetry.speedLoopMixScale)
+                                        : telemetry.balanceOutputClamped;
+  telemetry.speedLoopSignedCommand = clampFloat(commandForDirection, -telemetry.balanceOutputLimit,
+                                                telemetry.balanceOutputLimit) *
+                                     telemetry.balanceMotorSign;
+  if (telemetry.speedLoopSignedCommand > BALANCE_SPEED_DIRECTION_DEADBAND_PWM) {
+    telemetry.speedLoopDirectionSign = 1;
+  } else if (telemetry.speedLoopSignedCommand < -BALANCE_SPEED_DIRECTION_DEADBAND_PWM) {
+    telemetry.speedLoopDirectionSign = -1;
+  } else {
+    resetSpeedLoopState(telemetry, "zero command", encoder.totalLeft, encoder.totalRight);
+    return;
+  }
+
+  if (!telemetry.speedLoopReady || encoder.totalLeft < g_speedLoopLastEncoderLeft ||
+      encoder.totalRight < g_speedLoopLastEncoderRight) {
+    resetSpeedLoopState(telemetry, "encoder baseline", encoder.totalLeft, encoder.totalRight);
+    return;
+  }
+
+  if (g_speedLoopLastDirectionSign != 0 && telemetry.speedLoopDirectionSign != g_speedLoopLastDirectionSign) {
+    resetSpeedLoopState(telemetry, "direction change", encoder.totalLeft, encoder.totalRight);
+    return;
+  }
+  g_speedLoopLastDirectionSign = telemetry.speedLoopDirectionSign;
+
+  g_speedLoopPeriodCount++;
+  if (g_speedLoopPeriodCount < BALANCE_SPEED_LOOP_PERIODS) {
+    return;
+  }
+  g_speedLoopPeriodCount = 0;
+
+  const long rawDeltaLeft = static_cast<long>(encoder.totalLeft - g_speedLoopLastEncoderLeft);
+  const long rawDeltaRight = static_cast<long>(encoder.totalRight - g_speedLoopLastEncoderRight);
+  g_speedLoopLastEncoderLeft = encoder.totalLeft;
+  g_speedLoopLastEncoderRight = encoder.totalRight;
+
+  telemetry.speedLoopDeltaLeft = rawDeltaLeft * telemetry.speedLoopDirectionSign;
+  telemetry.speedLoopDeltaRight = rawDeltaRight * telemetry.speedLoopDirectionSign;
+  telemetry.speedLoopCarSpeed = (telemetry.speedLoopDeltaLeft + telemetry.speedLoopDeltaRight) * 0.5f;
+  telemetry.speedLoopFilter = (telemetry.speedLoopFilter * 0.7f) + (telemetry.speedLoopCarSpeed * 0.3f);
+  const float proposedIntegral = clampFloat(telemetry.speedLoopIntegral + telemetry.speedLoopFilter,
+                                            -BALANCE_SPEED_INTEGRAL_LIMIT, BALANCE_SPEED_INTEGRAL_LIMIT);
+  const float proposedOutput = (-BALANCE_SPEED_KP * telemetry.speedLoopFilter) -
+                               (BALANCE_SPEED_KI * proposedIntegral);
+  const float proposedMixedOutput = control_mix::applySpeedCorrection(
+      telemetry.balanceOutputClamped, proposedOutput, telemetry.speedLoopMixScale);
+  const bool mixWouldSaturate = telemetry.speedLoopMixEnabled &&
+                                (proposedMixedOutput > telemetry.balanceOutputLimit ||
+                                 proposedMixedOutput < -telemetry.balanceOutputLimit);
+
+  if (!mixWouldSaturate) {
+    telemetry.speedLoopIntegral = proposedIntegral;
+  }
+  telemetry.speedLoopOutput = (-BALANCE_SPEED_KP * telemetry.speedLoopFilter) -
+                              (BALANCE_SPEED_KI * telemetry.speedLoopIntegral);
+  telemetry.speedLoopSampleCount++;
+}
+
+void computeSpeedMixedOutput(BalanceTelemetry &telemetry) {
+  float mixedOutput = telemetry.balanceOutputClamped;
+  if (telemetry.balanceControlSafetyOk && telemetry.speedLoopMixEnabled && telemetry.speedLoopReady) {
+    mixedOutput = control_mix::applySpeedCorrection(
+        telemetry.balanceOutputClamped, telemetry.speedLoopOutput, telemetry.speedLoopMixScale);
+  }
+
+  telemetry.balanceMixedOutputRaw = mixedOutput;
+  telemetry.balanceMixedOutputSaturated =
+      control_mix::isSaturated(telemetry.balanceOutputRaw, telemetry.balanceOutputLimit) ||
+      control_mix::isSaturated(mixedOutput, telemetry.balanceOutputLimit);
+  telemetry.balanceMixedOutputClamped = clampFloat(mixedOutput, -telemetry.balanceOutputLimit, telemetry.balanceOutputLimit);
+  if (!telemetry.balanceControlSafetyOk) {
+    telemetry.balanceMixedOutputSaturated = false;
+    telemetry.balanceMixedOutputClamped = 0.0f;
+  }
+
+  telemetry.balanceLeftPwm = static_cast<int>(telemetry.balanceMixedOutputClamped);
+  telemetry.balanceRightPwm = static_cast<int>(telemetry.balanceMixedOutputClamped);
+}
+
+void applyBalanceMotorOutput(BalanceTelemetry &telemetry) {
+  telemetry.balanceDriveCommandSent = false;
+
+#if BALANCE_MOTOR_OUTPUT_AVAILABLE == 0
+  telemetry.balanceMotorOutputAvailable = false;
+  telemetry.balanceMotorOutputArmed = false;
+  telemetry.balanceMotorOutputEnabled = false;
+  return;
+#else
+  ArmRuntime runtime = copyArmRuntime();
+  telemetry.balanceMotorOutputAvailable = true;
+  applyArmRuntimeToTelemetry(telemetry, runtime);
+
+  if (!runtime.armed) {
+    return;
+  }
+
+  if (runtime.timeoutMs > 0 && runtime.startedAtMs > 0 && millis() - runtime.startedAtMs >= runtime.timeoutMs) {
+    setArmState(false);
+    runtime = copyArmRuntime();
+    applyArmRuntimeToTelemetry(telemetry, runtime);
+    telemetry.balanceIntegralError = 0.0f;
+    setBalanceSafetyReason(telemetry, "arm timeout");
+    queueMotorStop();
+    return;
+  }
+
+  if (!telemetry.balanceControlSafetyOk) {
+    setArmState(false);
+    runtime = copyArmRuntime();
+    applyArmRuntimeToTelemetry(telemetry, runtime);
+    telemetry.balanceIntegralError = 0.0f;
+    queueMotorStop();
+    return;
+  }
+
+  recordArmSample(telemetry.balanceMixedOutputSaturated);
+  runtime = copyArmRuntime();
+  applyArmRuntimeToTelemetry(telemetry, runtime);
+
+  const int pwm = clampPwm(telemetry.balanceMixedOutputClamped * telemetry.balanceMotorSign);
+  telemetry.balanceLeftPwm = pwm;
+  telemetry.balanceRightPwm = pwm;
+
+  if (!g_motorQueue) {
+    return;
+  }
+
+  MotorCommandMsg msg{};
+  msg.cmd = MotorCommand::BalanceDrive;
+  msg.timeoutMs = BALANCE_DRIVE_COMMAND_TIMEOUT_MS;
+  msg.leftPwm = pwm;
+  msg.rightPwm = pwm;
+  telemetry.balanceDriveCommandSent = motor_submit_command(msg);
+#endif
+}
+
+void applyConfigToTelemetry(BalanceTelemetry &telemetry, const BalanceControlConfig &config) {
+  telemetry.balanceControllerEnabled = BALANCE_CONTROLLER_COMPUTE_ENABLED != 0;
+  telemetry.balanceMotorOutputAvailable = BALANCE_MOTOR_OUTPUT_AVAILABLE != 0;
+  applyArmRuntimeToTelemetry(telemetry, copyArmRuntime());
+  telemetry.balanceSetpointDeg = config.setpointDeg;
+  telemetry.balanceKp = config.kp;
+  telemetry.balanceKi = config.ki;
+  telemetry.balanceKd = config.kd;
+  telemetry.balanceOutputLimit = config.outputLimit;
+  telemetry.balanceMaxAbsAngleDeg = config.maxAbsAngleDeg;
+  telemetry.balanceMotorSign = config.motorSign >= 0.0f ? 1.0f : -1.0f;
+  telemetry.speedLoopMixEnabled = config.speedMixEnabled;
+  telemetry.speedLoopMixScale = clampFloat(config.speedMixScale, 0.0f, 1.0f);
+}
+
+float clampFloat(float value, float minValue, float maxValue) {
+  if (value < minValue) {
+    return minValue;
+  }
+  if (value > maxValue) {
+    return maxValue;
+  }
+  return value;
+}
+
+int clampPwm(float value) {
+  return static_cast<int>(clampFloat(value, -255.0f, 255.0f));
+}
+
+void queueMotorStop() {
+  if (!g_motorQueue) {
+    return;
+  }
+  MotorCommandMsg msg{};
+  msg.cmd = MotorCommand::Stop;
+  msg.timeoutMs = 0;
+  motor_submit_command(msg);
+}
+
+void emitSerialTelemetry(const BalanceTelemetry &telemetry) {
+#if defined(USE_SERIAL) && defined(BALANCE_SERIAL_TELEMETRY)
+  static bool headerPrinted = false;
+  static unsigned long lastSerialMs = 0;
+  const unsigned long nowMs = millis();
+  if (nowMs - lastSerialMs < BALANCE_SERIAL_TELEMETRY_MS) {
+    return;
+  }
+  lastSerialMs = nowMs;
+
+  if (!headerPrinted) {
+    Serial.println(
+        "balance_csv,ms,lastReadOk,calibrated,loopDtMs,failedReadCount,accelTiltXSmoothedDeg,accelTiltXDeg,"
+        "accelAngleAyAzSmoothedDeg,accelAngleAxAySmoothedDeg,gyroXRateDps,gyroYRateDps,gyroZRateDps,"
+        "balanceControlSafetyOk,balanceOutputClamped,balanceMixedOutputClamped,speedLoopSignedCommand,"
+        "speedLoopDirectionSign,"
+        "balanceSafetyReason,lastError");
+    headerPrinted = true;
+  }
+
+  Serial.print("balance_csv,");
+  Serial.print(telemetry.updatedAtMs);
+  Serial.print(",");
+  Serial.print(telemetry.lastReadOk ? 1 : 0);
+  Serial.print(",");
+  Serial.print(telemetry.calibrated ? 1 : 0);
+  Serial.print(",");
+  Serial.print(telemetry.loopDtMs, 3);
+  Serial.print(",");
+  Serial.print(telemetry.failedReadCount);
+  Serial.print(",");
+  Serial.print(telemetry.accelTiltXSmoothedDeg, 3);
+  Serial.print(",");
+  Serial.print(telemetry.accelTiltXDeg, 3);
+  Serial.print(",");
+  Serial.print(telemetry.accelAngleAyAzSmoothedDeg, 3);
+  Serial.print(",");
+  Serial.print(telemetry.accelAngleAxAySmoothedDeg, 3);
+  Serial.print(",");
+  Serial.print(telemetry.gyroXRateDps, 3);
+  Serial.print(",");
+  Serial.print(telemetry.gyroYRateDps, 3);
+  Serial.print(",");
+  Serial.print(telemetry.gyroZRateDps, 3);
+  Serial.print(",");
+  Serial.print(telemetry.balanceControlSafetyOk ? 1 : 0);
+  Serial.print(",");
+  Serial.print(telemetry.balanceOutputClamped, 3);
+  Serial.print(",");
+  Serial.print(telemetry.balanceMixedOutputClamped, 3);
+  Serial.print(",");
+  Serial.print(telemetry.speedLoopSignedCommand, 3);
+  Serial.print(",");
+  Serial.print(telemetry.speedLoopDirectionSign);
+  Serial.print(",");
+  Serial.print(telemetry.balanceSafetyReason);
+  Serial.print(",");
+  Serial.println(telemetry.lastError);
+#endif
+}
+}  // namespace

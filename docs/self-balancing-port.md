@@ -1,0 +1,113 @@
+# Tumbller Self-Balancing Port
+
+## Source References
+
+- Upstream issue: YakRoboticsGarage/tumbller-esp32s3#8, "Port tumbller self balancing code".
+- Official tutorial page: https://www.elegoo.com/blogs/arduino-projects/elegoo-tumbller-self-balancing-robot-car-tutorial
+- Local source archive: `/Users/spencer/Desktop/Project/yak_rover/ELEGOO TumbllerV1.1 Self-Balancing Car Tutorial 2024.03.01`
+- Primary Elegoo code reference: `Tumbller_Code_20240301/Tumbller`
+- Important source files:
+  - `BalanceCar.h`: 5 ms balance loop, PID mixing, encoder speed loop, fall handling.
+  - `KalmanFilter.cpp`: angle estimate from `atan2(ay, az)` and gyro X.
+  - `MPU6050.cpp/.h`: MPU6050 register setup and motion reads.
+
+## Milestone 1: Sensor Validation
+
+Goal: make IMU and pitch telemetry observable on the ESP32S3 without enabling automatic balance motor output.
+
+Planned behavior:
+
+- Keep manual `/motor/*` and motor diagnostic endpoints separate from balance telemetry.
+- Initialize an MPU6050-style IMU at `0x68`, matching Elegoo's default low-AD0 address.
+- Expose raw IMU values at `/imu/raw`.
+- Expose pitch estimate, gyro rate, loop timing, calibration state, and disabled motor output at `/balance/status`.
+- Stream low-rate `balance_csv` lines over USB serial for sensor validation when WiFi/HTTP observability is unreliable.
+- Recalibrate stationary gyro bias through `/balance/calibrate`.
+- Protect all I2C users behind one FreeRTOS mutex.
+
+Safety constraints:
+
+- This milestone must not call motor drive methods from balance code.
+- Balance motor output stays reported as disabled until IMU orientation, angle zero, and loop timing are validated by hand.
+- Tuning constants copied from Elegoo are treated as references, not final values for the ESP32S3 hardware.
+
+## Control Notes From Elegoo V1.1
+
+- The original balance ISR runs every 5 ms.
+- Kalman input angle is `atan2(ay, az) * 57.3`.
+- Balance gyro is `(gx - 128.1) / 131`.
+- Fall range is approximately `-22` to `22` degrees.
+- The speed PI controller is intentionally slower than the balance loop; it updates every eighth 5 ms tick.
+
+## IMU Axis Candidate Notes
+
+The accelerometer reports gravity projected onto the sensor's X/Y/Z axes. A tilt angle needs two projected components, so the validation firmware exposes candidates named by the two accelerometer axes passed to `atan2`:
+
+- `accelAngleAyAzDeg`: `atan2(ay, az)`, matching the Elegoo AVR pitch convention.
+- `accelAngleAxAzDeg`: `atan2(ax, az)`, an alternate candidate for a different IMU mounting orientation.
+- `accelAngleAxAyDeg`: `atan2(ax, ay)`, useful when gravity is mostly shared between X and Y.
+- `accelTiltXDeg`: `atan2(ax, sqrt(ay^2 + az^2))`, a pitch-from-X candidate that compares X-axis gravity against the combined non-X gravity magnitude.
+
+The `*SmoothedDeg` fields are low-pass filtered copies for hand validation. The non-smoothed fields remain available for debugging sensor noise and filter lag.
+
+Current hand-test interpretation:
+
+- `accelTiltXDeg` is the leading forward/back pitch candidate.
+- `gyroYRateDps` is the forward/back pitch-rate candidate; it moves during forward/back rocking and changes polarity when tilt direction reverses.
+- `accelAngleAyAzDeg` behaves like side-to-side roll on this mounting.
+- `accelAngleAxAyDeg` wraps near upright and should remain a diagnostic signal, not a control input.
+
+Selected validation path:
+
+- `/balance/status` reports `accelPitchDeg` from `accelTiltXDeg`.
+- `/balance/status` reports `gyroRateDps` from bias-corrected `gyroYRateDps`.
+- The Kalman pitch estimate uses `accelTiltXDeg + gyroYRateDps` for validation only.
+- `balanceMotorOutputEnabled` remains `false`; the selected pitch path is not yet allowed to drive motors.
+
+## Balance Control Preview
+
+The first controller milestone computes a proposed balance output without applying it to the motors.
+
+- Elegoo's vertical-ring reference gains are `Kp=55.0`, `Ki=0.0`, `Kd=0.75`.
+- Safer preview defaults are `Kp=5.0`, `Ki=0.0`, `Kd=0.15`, with output limited to `+/-120 pwm`.
+- `/balance/config` exposes RAM-only runtime tuning for `kp`, `ki`, `kd`, `setpoint`, `limit`, and `maxAngle`.
+- Runtime tuning is intentionally volatile; a board reset returns to compile-time defaults.
+- The controller computes `P`, `I`, `D`, raw output, clamped output, and proposed left/right PWM.
+- With `Ki=0.0`, the integral accumulator is held at zero to avoid hidden windup before integral tuning is deliberately enabled.
+- Safety gates require a healthy sensor read, completed gyro calibration, and pitch within `+/-22 deg`.
+- If a gate fails, the clamped output is forced to zero and `/balance/status` reports `balanceSafetyReason`.
+- Balance motor output is available only through explicit runtime arming. The board starts disarmed after reset.
+- `/balance/arm` requires calibration, healthy sensor reads, pitch inside the configured safe window, and `outputLimit <= 160 pwm`. `/balance/arm?ms=...` adds an optional bounded runtime, clamped by `BALANCE_ARM_MAX_RUNTIME_MS`, for short physical test runs. The `160 pwm` ceiling follows a traced floor run that saturated at `90 pwm` and has been validated wheels-up in all four wheel/direction cases plus the balance command path.
+- `/balance/disarm` clears the runtime arm state and queues a motor stop.
+- Motor commands use a one-element latest-value mailbox. Each balance update overwrites any unconsumed prior command so the motor task never executes a FIFO backlog of stale corrections; stop commands use the same overwrite path.
+- `/balance/config` includes `motorSign` so first-motion polarity can be flipped without rebuilding.
+- Manual `/motor/*` diagnostics remain separate from balance telemetry.
+- `/motor/test/signed?left=...&right=...&ms=...` provides a balance-disarmed characterization pulse bounded to `+/-160 pwm` and `600 ms`; requests are rejected while balance output is armed.
+- `/motor/measurement` reports the PWM values and timestamp most recently applied by the motor task together with an immediate snapshot of both raw encoder counters. This separates command-application delay from motor deadband and mechanical startup delay.
+- Encoders are initialized by the motor task and exposed at `/encoder/status`.
+- Encoder speed telemetry uses Elegoo's 40 ms speed-window shape: left/right pulse deltas are averaged into `combinedSpeedPulses`, then filtered as `old * 0.7 + sample * 0.3`.
+- Current encoder reads are single-channel pulse counts, not quadrature direction. Direction for speed-loop integration must be inferred from the commanded wheel PWM sign, matching Elegoo's `pwm_left < 0 ? -count : count` pattern.
+- `/encoder/reset` clears pulse totals and the speed-filter baseline for validation runs.
+- `/balance/status` now exposes an Elegoo-style speed-loop preview: signed encoder deltas, `speedLoopCarSpeed`, `speedLoopFilter`, `speedLoopIntegral`, and `speedLoopOutput`.
+- `/balance/status` also exposes `speedLoopSignedCommand` and `speedLoopDirectionSign` so wheels-up tests can verify that signed encoder deltas match the active balance PWM direction. A zero balance command reports direction `0` because direction cannot be inferred from single-channel encoders without a commanded wheel sign.
+- Speed-loop preview is observability only unless explicitly enabled at runtime with `/balance/config?speedMix=1&speedScale=...`. When enabled, this port uses `balanceOutputClamped + speedLoopOutput * speedLoopMixScale`, clamped to the active balance output limit, so the measured-speed term reduces same-direction wheel drive. All existing arm and angle safety gates remain active.
+- Speed-loop dynamic state resets while disarmed, while unsafe, when encoder totals reset, near zero command, or when the inferred command direction changes. Runtime telemetry reports `speedLoopResetCount` and `speedLoopResetReason` so stale integral state is visible during test runs.
+- Physical test-run telemetry reports arm timing, sample count, mixed-output saturation count, and saturation ratio so tuning decisions can be based on bounded runs rather than open-ended observation.
+- Saturation telemetry counts either angle-loop raw output or the post-speed-mix output exceeding the active limit; clamping the angle term before mixing no longer hides angle-only saturation.
+- Each arm starts a 512-sample onboard trace at `20 ms` intervals. `/balance/trace` returns chronological raw accelerometer pitch, filtered pitch, gyro rate, controller output, requested and motor-task-applied PWM, applied timestamp/sequence, encoders, safety, saturation, and five post-disarm samples. This trace is the source of truth for sub-second reversal diagnosis; the browser dashboard's one-second history is for human overview only.
+
+## Milestone Checklist
+
+- [x] Preserve motor diagnostic bring-up work on a dedicated branch.
+- [x] Import AVR-vs-ESP32 control-loop comparison notes.
+- [x] Document source references and validation workflow.
+- [x] Build and expose raw IMU telemetry.
+- [x] Build and expose pitch/Kalman telemetry.
+- [x] Validate `/i2c/scan`, `/imu/raw`, and `/balance/status` on hardware.
+- [x] Record hardware validation results in `docs/balancing-experiments.md`.
+- [x] Add preview-only balance PID/output telemetry with motor writes disabled.
+- [x] Add explicit runtime arm/disarm path for first-motion testing.
+- [x] Validate first controlled balance motor motion on hardware.
+- [x] Expose encoder telemetry and validate left/right pulse counts.
+- [x] Port Elegoo's encoder-based speed loop into preview telemetry.
+- [x] Validate speed-loop preview signs during short wheels-up balance-drive tests.

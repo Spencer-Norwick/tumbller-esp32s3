@@ -1,0 +1,652 @@
+# Balancing Experiments
+
+Use this log for each meaningful experiment, including failed attempts. Keep entries concrete enough that another contributor can reproduce the setup and understand the result.
+
+## Template
+
+Date:
+
+Goal:
+
+Setup:
+
+Change:
+
+Result:
+
+Takeaway:
+
+Next action:
+
+## 2026-06-23: Branch And Safety Baseline
+
+Goal: Start the self-balancing port with a public, reviewable branch and preserve the existing motor bring-up work.
+
+Setup: Local fork `Spencer-Norwick/tumbller-esp32s3`, upstream `YakRoboticsGarage/tumbller-esp32s3`, starting from `spencer-dev`.
+
+Change: Created `feature/self-balancing-sensor-validation` and committed the existing motor diagnostic controls before adding balance telemetry.
+
+Result: Branch has a clean first commit for motor diagnostics, keeping safety and polarity work distinct from IMU work.
+
+Takeaway: The balancing port should remain incremental: motor diagnostics, sensor validation, controller design, then tuning.
+
+Next action: Add IMU raw telemetry and pitch validation endpoints with balance motor output disabled.
+
+## 2026-06-23: Elegoo Source Inspection
+
+Goal: Confirm the exact Elegoo source files used as references for the ESP32S3 port.
+
+Setup: Local official archive at `/Users/spencer/Desktop/Project/yak_rover/ELEGOO TumbllerV1.1 Self-Balancing Car Tutorial 2024.03.01`.
+
+Change: Inspected `Tumbller_Code_20240301/Tumbller/BalanceCar.h`, `KalmanFilter.cpp/.h`, and `MPU6050.cpp/.h`.
+
+Result: Confirmed the original loop uses an MPU6050 at `0x68`, a 5 ms balance interval, `atan2(ay, az)` pitch input, gyro X scaled by `131`, and Kalman constants `Q_angle=0.001`, `Q_gyro=0.005`, `R_angle=0.5`, `C_0=1`.
+
+Takeaway: The first firmware milestone should validate axes and angle sign before any motor balancing output is connected.
+
+Next action: Implement ESP32S3 IMU reads and pitch telemetry without copying the full AVR-oriented vendor library.
+
+## 2026-06-23: Sensor Telemetry Firmware Build
+
+Goal: Add sensor-validation firmware without connecting balance output to the motors.
+
+Setup: PlatformIO environment `arduino_nano_esp32`, Arduino Nano ESP32 target, existing WiFi/server and motor-task architecture.
+
+Change: Added a minimal MPU6050 register driver, a Kalman pitch estimator based on Elegoo's `KalmanFilter.cpp`, a `balanceTask` that samples at 5 ms, a shared I2C mutex, and HTTP endpoints `/imu/raw`, `/balance/status`, and `/balance/calibrate`.
+
+Result: `platformio run` completed successfully. Reported memory use: RAM 14.4%, flash 24.7%.
+
+Takeaway: The first balance milestone now supports observable raw IMU and pitch telemetry while keeping `balanceMotorOutputEnabled=false`.
+
+Next action: Flash the board, run `/i2c/scan`, verify the IMU appears at `0x68`, then hand-rotate the robot and record angle sign/range observations.
+
+## 2026-06-23: First Hardware Flash And IMU Identity Check
+
+Goal: Flash the sensor-validation firmware and confirm the board can see the expected I2C devices.
+
+Setup: Arduino Nano ESP32 connected over USB-C at `/dev/cu.usbmodem11301`, WiFi hostname `finland-tumbller-01`, assigned IP `192.168.4.53`.
+
+Change: Uploaded `feature/self-balancing-sensor-validation` firmware and queried `/info`, `/i2c/scan`, `/imu/raw`, and `/balance/status`.
+
+Result: Upload succeeded. `/info` returned the expected hostname/IP. `/i2c/scan` returned `0x44` and `0x68`. The first IMU driver rejected the device because `WHO_AM_I` returned `0x98`, not the common MPU6050-compatible values expected by the driver.
+
+Takeaway: The hardware has an IMU responding at the expected I2C address, but identity validation must be advisory during bring-up. Raw reads are more useful than blocking telemetry on a strict chip ID check.
+
+Next action: Allow raw IMU reads with `whoAmICompatible=false` so orientation and data sanity can be validated before deciding whether the IMU identity needs a driver-specific path.
+
+## 2026-06-23: Advisory IMU Identity And First Raw Reads
+
+Goal: Continue sensor validation even though the IMU identity register does not match the common MPU6050-compatible values.
+
+Setup: Same flashed board at `192.168.4.53`, IMU responding on I2C address `0x68`.
+
+Change: Changed `WHO_AM_I` handling from a hard failure to advisory telemetry. The endpoints now expose `whoAmI` and `whoAmICompatible` while still attempting raw reads.
+
+Result: `/imu/raw` returned `imuReady=true`, `lastReadOk=true`, `whoAmI=0x98`, `whoAmICompatible=false`, with nonzero accelerometer and gyro data. `/balance/status` returned `failedReadCount=0` and `balanceMotorOutputEnabled=false`.
+
+Takeaway: The sensor path is live, but the identity mismatch should stay visible because it may indicate a compatible clone or a different IMU variant. The current Elegoo pitch convention reports about `-178 deg` while the robot is resting in this orientation, so axis/sign validation remains required before motor control.
+
+Next action: Hand-rotate the robot around each axis, record raw value changes and pitch direction, then decide whether pitch should use the Elegoo axis unchanged or an ESP32S3-specific orientation transform.
+
+## 2026-06-23: Stationary Gyro Calibration Smoke Test
+
+Goal: Verify `/balance/calibrate` updates gyro bias and reduces stationary gyro-rate drift.
+
+Setup: Robot kept stationary after raw IMU reads were enabled.
+
+Change: Called `/balance/calibrate`, then queried `/balance/status`.
+
+Result: Calibration completed with `calibrated=true`, `gyroBiasRaw=47.718`, and `gyroRateDps=0.017`. Loop timing reported about `7.000 ms`, not the configured 5 ms target.
+
+Takeaway: Calibration works as a smoke test, but loop timing is slower than intended and should be measured again after any task-priority or delay changes. The angle estimate is still not validated for physical orientation.
+
+Next action: Keep balance motor output disabled; next work should focus on orientation validation and loop timing before any PID output is connected.
+
+## 2026-06-23: Hands-On Axis Observation
+
+Goal: Determine whether the current Elegoo pitch convention measures the robot's forward/back balance axis on this hardware.
+
+Setup: Balance Lab dashboard open at `http://127.0.0.1:8787`, robot manually tilted by hand.
+
+Change: Observed pitch response while tilting the robot forward/back and side-to-side.
+
+Result: The current pitch estimate is close to `0 deg` when upright on wheels and close to `-180 deg` when wheels-up, but it changes much more during side-to-side wheel-lift motion than during forward/back tilt.
+
+Takeaway: The current Elegoo `atan2(ay, az)` angle appears to be measuring the side-to-side roll axis for this ESP32/IMU mounting, not the forward/back balance axis. We need explicit axis-candidate telemetry before choosing the Kalman input for motor balancing.
+
+Next action: Expose alternate accelerometer angle candidates and gyro axis rates in `/balance/status`, then repeat the hands-on tilt test to identify the forward/back axis.
+
+## 2026-06-23: Telemetry Polling Load Check
+
+Goal: Verify that repeated telemetry reads can support hands-on IMU orientation testing without disrupting the ESP32 HTTP server.
+
+Setup: Balance Lab dashboard pointed at the robot over WiFi, with `/balance/status` and `/imu/raw` requested repeatedly through the local dashboard proxy.
+
+Change: Added axis-candidate fields to `/balance/status`, then refreshed the dashboard while it was polling telemetry.
+
+Result: `/balance/status` initially returned the new axis fields successfully, but repeated polling produced intermittent proxy `502` responses and eventually direct requests to the board timed out.
+
+Takeaway: The current single-client HTTP server path needs to fail fast on stale connections and yield while waiting for request headers. The dashboard should avoid unnecessary concurrent polling while we are validating control-loop sensors.
+
+Next action: Shorten the firmware header-read timeout, add a maximum header size, yield inside the client-read loop, and keep live dashboard polling focused on `/balance/status`.
+
+## 2026-06-24: Axis Candidate Readability
+
+Goal: Make hands-on IMU orientation characterization easier to interpret.
+
+Setup: Robot manually tilted while watching the Balance Lab dashboard axis-candidate panel.
+
+Change: Reviewed the axis-candidate telemetry names and live readout behavior after a hand test showed noisy values and unclear `AxAz`/`AxAy` labels.
+
+Result: The raw candidate values were too jumpy for easy hand interpretation, and the two-axis field names were not self-explanatory without knowing that each candidate is an `atan2(axis1, axis2)` angle.
+
+Takeaway: Sensor-validation telemetry needs both machine-useful raw values and human-readable, smoothed readouts for bring-up work.
+
+Next action: Add low-pass filtered `*SmoothedDeg` fields to `/balance/status`, keep raw candidate fields, and update dashboard labels to show the `atan2(...)` convention directly.
+
+## 2026-06-24: Axis Trace Selection
+
+Goal: Make the dashboard trace useful for identifying the forward/back balance axis.
+
+Setup: Balance Lab dashboard polling `/balance/status`; robot manually rocked forward/back and side-to-side.
+
+Change: Compared dashboard trace response against the numeric axis-candidate readouts.
+
+Result: The original trace mostly moved during side-to-side wheel-lift motion because it plotted the legacy `pitchDeg`/`gyroRateDps` path, which still follows the Elegoo `atan2(ay, az)` and gyro-X convention.
+
+Takeaway: Until the correct mounted pitch axis is selected, the trace should show all candidate angle movement rather than only the current Kalman pitch path.
+
+Next action: Use a candidate-delta trace and recent peak-to-peak movement readouts to compare forward/back rocking against side-to-side rocking.
+
+## 2026-06-24: Forward/Back Candidate Movement
+
+Goal: Identify which accelerometer angle candidates respond to forward/back rocking.
+
+Setup: Balance Lab dashboard using the candidate-delta trace and peak-to-peak movement readouts; robot manually rocked forward/back.
+
+Change: Cleared the trace, then rocked the robot forward/back while comparing `atan2(AY, AZ)`, `atan2(AX, AZ)`, and `atan2(AX, AY)`.
+
+Result: `atan2(AX, AZ)` and `atan2(AX, AY)` both moved during forward/back rocking. `atan2(AX, AY)` appeared to move roughly three times as much as `atan2(AX, AZ)`.
+
+Takeaway: The forward/back balance axis likely involves the accelerometer X component, but larger amplitude alone is not enough to select `atan2(AX, AY)`. If AY is near zero around the upright pose, `atan2(AX, AY)` can be overly sensitive and less stable than `atan2(AX, AZ)`.
+
+Next action: Run the same cleared-trace test for side-to-side wheel-lift motion and compare peak-to-peak movement. Prefer the candidate that moves strongly during forward/back rocking and weakly during side-to-side rocking.
+
+## 2026-06-24: AX/AY Wrap During Forward/Back Rocking
+
+Goal: Determine whether the high-amplitude `atan2(AX, AY)` response is a usable pitch candidate.
+
+Setup: Balance Lab candidate-delta trace after a few forward/back rocks. Screenshot captured with `AY/AZ movement = 1.47 deg`, `AX/AZ movement = 126.48 deg`, and `AX/AY movement = 179.77 deg`.
+
+Change: Compared trace shape and symmetry, not only peak-to-peak movement.
+
+Result: The `atan2(AX, AY)` trace jumped sharply and was not symmetric around the resting position. It approached a near-180 degree movement range, while `atan2(AX, AZ)` moved more continuously.
+
+Takeaway: `atan2(AX, AY)` is likely crossing an unstable region around the upright pose and should be treated as a debug signal, not the primary pitch estimate. A pitch-from-X candidate should compare AX against the combined non-X gravity magnitude instead of only AY.
+
+Next action: Add `accelTiltXDeg = atan2(ax, sqrt(ay^2 + az^2))` and use it in the dashboard trace for the next forward/back and side-to-side tests.
+
+## 2026-06-24: Tilt-Dependent WiFi Telemetry Dropout
+
+Goal: Determine whether telemetry loss during backward tilt is caused by sensor math, sensor reads, WiFi/HTTP, or physical connection issues.
+
+Setup: Balance Lab dashboard over WiFi/HTTP while manually tilting forward and backward.
+
+Change: Slowly tilted forward, then attempted to tilt backward.
+
+Result: Forward tilt produced visible X-tilt trace movement. During backward tilt the dashboard telemetry went offline; tilting forward again brought telemetry back, but the dashboard was laggy.
+
+Takeaway: A dashboard offline state means the HTTP telemetry path failed, not necessarily that IMU reads failed. The position-dependent behavior may be WiFi orientation, USB/power strain, loose wiring, or firmware HTTP overload, so we need an observability channel that bypasses WiFi.
+
+Next action: Add low-rate USB serial `balance_csv` telemetry and repeat the tilt test with a serial monitor open. If serial keeps streaming while WiFi drops, debug WiFi/HTTP/tooling. If serial stops or resets, inspect power, USB cable strain, and wiring.
+
+## 2026-06-24: X-Tilt Candidate Shape
+
+Goal: Compare `accelTiltXDeg` against the wrapping `atan2(AX, AY)` signal during slow forward/back rocking.
+
+Setup: Balance Lab dashboard after adding the X-tilt candidate. Robot was slowly rocked forward/back near upright.
+
+Change: Observed the trace shape for `atan2(AY, AZ)`, X tilt, and `atan2(AX, AY)`.
+
+Result: X tilt moved smoothly through the forward/back rocking motion. `atan2(AX, AY)` jumped across the plot axis as the robot approached and crossed the upright balance point.
+
+Takeaway: X tilt is the leading accelerometer pitch candidate for forward/back balance on this mounting. `atan2(AX, AY)` should remain visible as a diagnostic signal only, because it wraps near upright.
+
+Next action: Run the same cleared-trace test for side-to-side wheel-lift motion. If X tilt remains comparatively quiet during side-to-side motion, use X tilt plus the matching gyro axis as the next Kalman pitch input.
+
+## 2026-06-24: Side-to-Side Roll Candidate Shape
+
+Goal: Confirm which candidate represents side-to-side roll when lifting one wheel at a time.
+
+Setup: Balance Lab dashboard after adding the X-tilt candidate. Robot was tilted side-to-side by lifting one wheel, then the other.
+
+Change: Observed the trace shape for `atan2(AY, AZ)`, X tilt, and `atan2(AX, AY)` during wheel-lift roll motion.
+
+Result: `atan2(AY, AZ)` moved smoothly and symmetrically across the resting axis during side-to-side roll. X tilt did not show the same clean roll-centered shape. `atan2(AX, AY)` continued to show wrap-like behavior.
+
+Takeaway: `atan2(AY, AZ)` is the roll-axis candidate on this mounting. This reinforces that the original Elegoo `atan2(ay, az)` pitch convention does not map directly to forward/back pitch on the ESP32S3 Tumbller hardware.
+
+Next action: Identify the gyro axis that best matches X-tilt forward/back pitch motion, then switch the validation Kalman path from the Elegoo AY/AZ + gyro-X convention to the mounted X-tilt + matching-gyro convention.
+
+## 2026-06-24: Forward/Back Gyro Axis Match
+
+Goal: Identify which gyro axis matches the X-tilt forward/back pitch candidate.
+
+Setup: Balance Lab dashboard with separate gyro-rate trace for gyro X, Y, and Z. Robot was manually tilted forward and backward.
+
+Change: Cleared the trace, then compared gyro X/Y/Z movement while rocking forward/back.
+
+Result: Gyro Y was the only gyro trace that clearly moved during forward/back tilt. Its polarity changed when the tilt direction reversed. Gyro X and gyro Z did not show comparable movement for this test.
+
+Takeaway: The mounted forward/back pitch path should use X tilt for angle and gyro Y for rate. This differs from the original Elegoo AVR convention, which used `atan2(ay, az)` and gyro X.
+
+Next action: Switch the validation Kalman input to `accelTiltXDeg + gyroYRateDps`, calibrating stationary gyro bias from raw gyro Y, while keeping balance motor output disabled.
+
+## 2026-06-24: Validation Kalman Axis Switch
+
+Goal: Apply the mounted pitch-axis finding to the validation-only Kalman path.
+
+Setup: Firmware update after hand tests identified X tilt as the forward/back angle candidate and gyro Y as the matching rate candidate.
+
+Change: Changed `accelPitchDeg` to use `accelTiltXDeg`, changed `gyroRateDps` to use bias-corrected raw gyro Y, changed stationary gyro calibration to average raw gyro Y, and added source labels to `/balance/status`.
+
+Result: Code and documentation updated locally. Build/upload validation is still pending because PlatformIO could not access its normal home-directory cache in the current restricted shell environment.
+
+Takeaway: The selected validation path now matches the observed ESP32S3 Tumbller IMU mounting, but it must still be built, uploaded, calibrated, and hand-validated before any motor-control milestone.
+
+Next action: Run `platformio run`, upload to the Nano ESP32, call `/balance/calibrate` while the robot is still, and validate that `pitchDeg` now follows forward/back rocking with `balanceMotorOutputEnabled=false`.
+
+## 2026-06-24: Mounted Pitch Path Build, Upload, and Stationary Calibration
+
+Goal: Build and upload the `accelTiltXDeg + gyroYRateDps` validation path, then verify stationary calibration.
+
+Setup: Arduino Nano ESP32 connected over USB at `/dev/cu.usbmodem11201`; Balance Lab dashboard pointed at `http://192.168.4.53`.
+
+Change: Built with PlatformIO, uploaded the firmware, restarted the local dashboard, and triggered `/balance/calibrate` while the robot was held still.
+
+Result: Build and upload succeeded. `/balance/status` reported `accelPitchSource="accelTiltXDeg"`, `gyroRateSource="gyroYRateDps"`, `calibrated=true`, `balanceMotorOutputEnabled=false`, `failedReadCount=0`, and `lastError="ok"`. Stationary gyro-Y bias calibrated to `227.746` raw counts. After calibration, `gyroRateDps` hovered near zero and `pitchDeg` stayed near `-2.35 deg` during the sampled stationary window.
+
+Takeaway: The selected mounted pitch path is now deployed and stationary gyro-Y calibration behaves correctly. No motor output is enabled.
+
+Next action: Repeat the trace test with deliberate forward/back rocking and confirm `pitchDeg` follows X tilt dynamically while side-to-side roll is rejected.
+
+## 2026-06-24: Mounted Pitch Dynamic Forward/Back Validation
+
+Goal: Confirm the deployed `accelTiltXDeg + gyroYRateDps` path responds to deliberate forward/back rocking and rejects side-to-side roll.
+
+Setup: Balance Lab dashboard after upload and stationary gyro-Y calibration. The trace was cleared, the robot was slowly rocked forward/back, then returned to upright stationary.
+
+Change: Compared dashboard movement ranges for angle candidates and gyro axes after the forward/back rocking trace.
+
+Result: X tilt moved `64.53 deg` during the trace, while `atan2(AY, AZ)` moved only `0.24 deg`. `atan2(AX, AY)` moved `178.75 deg`, consistent with the known near-upright wrap behavior. Gyro Y showed the dominant rate movement at `20.95 dps`; gyro X moved `0.30 dps` and gyro Z moved `1.52 dps`. After returning upright, `/balance/status` reported `pitchDeg=-0.622 deg`, `accelPitchSource="accelTiltXDeg"`, `gyroRateSource="gyroYRateDps"`, `gyroRateDps=-0.036`, `balanceMotorOutputEnabled=false`, `failedReadCount=0`, and `lastError="ok"`.
+
+Takeaway: The deployed validation path correctly selects the forward/back mounted pitch axis. X tilt is the pitch angle candidate, gyro Y is the pitch-rate candidate, AY/AZ is rejected as roll for this mounting, and AX/AY remains a diagnostic wrap signal.
+
+Next action: Add pre-motor balance-control scaffolding: explicit enable gate, PID/output telemetry, and safety constraints, with computed motor output still disabled by default.
+
+## 2026-06-24: Preview-Only Balance Controller Scaffolding
+
+Goal: Add enough controller structure to inspect proposed balance output before allowing any automatic motor writes.
+
+Setup: Firmware after mounted pitch dynamic validation. Motor output is intentionally disabled by configuration.
+
+Change: Added preview controller telemetry using `pitchDeg` and `gyroYRateDps`, starting from the Elegoo vertical-ring reference gains `Kp=55.0`, `Ki=0.0`, and `Kd=0.75`. Added safety gates for sensor health, completed gyro calibration, and a `+/-22 deg` pitch window. Added `/balance/status` fields for controller enabled state, safety state, safety reason, gains, P/I/D terms, raw output, clamped output, and proposed left/right PWM. Held the integral accumulator at zero while `Ki=0.0`.
+
+Result: Build and upload succeeded. Before calibration, `/balance/status` reported `balanceControlSafetyOk=false`, `balanceSafetyReason="not calibrated"`, and `balanceOutputClamped=0.000` despite nonzero raw output. After calibration, stationary telemetry reported `balanceControlSafetyOk=true`, `balanceMotorOutputEnabled=false`, `balanceIntegralError=0.000`, and proposed output around `39 pwm` near `0.7 deg` pitch. During a forward/back hand-rock trace, X tilt moved `92.78 deg`, gyro Y moved `38.22 dps`, and proposed output reached the clamp in both directions: `-255.0 / 255.0 pwm`.
+
+Takeaway: The preview scaffolding works and remains non-actuating. The Elegoo reference gains are high enough to saturate the preview output during large hand-rock tests, so the next tuning step should use smaller preview gains or constrained near-upright tests before any motor-apply milestone.
+
+Next action: Add runtime tuning or a reduced-gain preview profile, then validate proposed output polarity and magnitude with small near-upright pitch motions before enabling any balance motor writes.
+
+## 2026-06-24: Runtime Preview Gain Tuning
+
+Goal: Avoid rebuild/upload cycles for preview-controller tuning while keeping balance motor output disabled.
+
+Setup: Preview-only controller after large hand-rock tests saturated the Elegoo reference output.
+
+Change: Changed compile-time preview defaults to `Kp=5.0`, `Ki=0.0`, `Kd=0.15`, and output limit `120 pwm`. Added RAM-only `/balance/config` tuning for `kp`, `ki`, `kd`, `setpoint`, `limit`, and `maxAngle`. Added dashboard controls to read and apply preview gains without firmware rebuilds.
+
+Result: Build and upload succeeded. `/balance/config` default readback returned `Kp=5.0`, `Ki=0.0`, `Kd=0.15`, output limit `120 pwm`, and `maxAbsAngle=22 deg`. A runtime update to `Kp=6.5`, `Ki=0.0`, `Kd=0.2`, output limit `90 pwm`, setpoint `0 deg`, and `maxAbsAngle=20 deg` returned `updated=true`. After calibration, `/balance/status` reflected the updated gains, `balanceControlSafetyOk=true`, `balanceMotorOutputEnabled=false`, `balanceIntegralError=0.000`, and proposed output around `5 pwm` near `0.8 deg` pitch.
+
+Takeaway: The next tuning loop should happen through the dashboard, not repeated firmware edits. Settings reset on board restart, which keeps experimental gain changes nonpersistent.
+
+Next action: Use the dashboard runtime controls for small near-upright hand tilts and choose preview gains that keep proposed output within range without saturation.
+
+## 2026-06-24: First-Motion Arm Path
+
+Goal: Allow a controlled first balance-motor movement without letting the controller drive motors automatically after reset.
+
+Setup: Robot connected over USB and WiFi after runtime preview tuning. Dashboard running at `http://127.0.0.1:8787`.
+
+Change: Added signed balance-drive motor commands owned by the motor task, runtime `/balance/arm` and `/balance/disarm` endpoints, a RAM-only `motorSign` config field, and dashboard Arm/Disarm controls. Space and Escape in the dashboard disarm balance and send `/motor/stop`.
+
+Result: Build and upload succeeded. Default state after reset was disarmed. A conservative first-motion config was applied with `Kp=5.0`, `Ki=0.0`, `Kd=0.15`, output limit `30 pwm`, max angle `12 deg`, and `motorSign=+1`. With the robot not calibrated and not near upright, `/balance/arm` returned `409 Conflict` with reason `not calibrated`; `/balance/disarm` returned cleanly.
+
+Takeaway: The first-motion path now has an explicit software arm gate, dashboard kill controls, and expected refusal behavior when prerequisites are not met.
+
+Next action: Put the robot wheels-down near upright, recalibrate gyro while stationary, verify `balanceControlSafetyOk=true`, then arm briefly with one hand ready to catch and use Space/Escape to disarm.
+
+## 2026-06-24: First Controlled Motion and Motor Polarity
+
+Goal: Confirm that the runtime arm path can produce real motor motion, then verify wheel polarity before deeper balance tuning.
+
+Setup: Runtime config `Kp=10.0`, `Ki=0.0`, `Kd=0.2`, output limit `45 pwm`, max angle `10 deg`, `motorSign=+1`. Robot held near upright for the balance arm test, then held wheels-up for motor diagnostics.
+
+Change: Armed balance briefly through the dashboard after gyro calibration and safety-gate verification. Then used one-wheel diagnostic endpoints with `hold=1` to observe each motor direction.
+
+Result: Balance arm produced audible/visible motor correction when the robot was tipped slightly. One-wheel diagnostics showed the same polarity on both sides: `left-high` moved the left wheel backward, `left-low` moved the left wheel forward, `right-high` moved the right wheel backward, and `right-low` moved the right wheel forward.
+
+Takeaway: The balance output path reaches the motors. The motor driver polarity convention needed correction because `HIGH` on both direction pins maps to physical backward and `LOW` maps to physical forward.
+
+Next action: Patch the motor driver so `Forward` and positive signed balance PWM mean physical forward, rebuild/upload, and repeat a short armed balance test.
+
+## 2026-06-24: Encoder Telemetry and Speed-Loop Direction
+
+Goal: Validate the hall encoder path before tuning the balance controller further, and line up the next milestone with Elegoo's known-working speed-loop architecture.
+
+Setup: Robot held wheels-up. Balance disarmed. Encoder firmware uploaded with `/encoder/status` and `/encoder/reset`; dashboard updated with encoder totals, 40 ms deltas, pulse rates, and speed-filter readouts.
+
+Change: Initialized encoder interrupts from the motor task, added atomic encoder count snapshots, and published a 40 ms encoder speed sample matching Elegoo's filter shape: average left/right pulse delta, then `speedFilter = old * 0.7 + sample * 0.3`.
+
+Result: Stationary `/encoder/status` returned initialized telemetry with zero counts. `/encoder/reset` cleared totals. Four wheels-up diagnostic pulses produced side-specific encoder counts: left-low forward counted left only (`221` pulses), left-high backward counted left only (`202` pulses), right-low forward counted right only (`216` pulses), and right-high backward counted right only (`214` pulses). Final instantaneous deltas/rates were zero because telemetry was read after each pulse completed and stopped.
+
+Takeaway: Encoder pulse counting works on both wheels and is roughly symmetric during unloaded diagnostic pulses. The encoder signal is currently single-channel pulse count, so wheel direction is not measured directly; the speed loop must infer signed pulses from commanded wheel PWM sign, as Elegoo does in `BalanceCar.h`.
+
+Next action: Add preview telemetry for Elegoo's encoder speed loop: signed left/right pulse accumulation over a 40 ms window, `speedFilter`, `car_speed_integral`, and `speed_control_output`, still without changing motor output behavior.
+
+## 2026-06-24: Speed-Loop Preview Telemetry
+
+Goal: Port the shape of Elegoo's encoder speed loop into observable telemetry before allowing it to affect motor output.
+
+Setup: Arduino Nano ESP32 connected over USB at `/dev/cu.usbmodem11201`; robot reachable at `http://192.168.4.53`; Balance Lab dashboard running locally at `http://127.0.0.1:8787`.
+
+Change: Added compile-time speed-loop constants matching the Elegoo structure: update every eighth 5 ms balance tick, `Kp=10.0`, `Ki=0.26`, and integral clamp `+/-3000`. `/balance/status` now reports encoder totals, signed speed-loop deltas, car speed, low-pass speed filter, integral accumulator, and preview speed-loop output. The dashboard displays the preview deltas and output in the Encoders panel.
+
+Result: `platformio run` passed and the firmware uploaded successfully. `/balance/status` reported `speedLoopReady=true`, zero stationary encoder totals, zero speed-loop deltas, zero filter/integral/output, and `balanceMotorOutputArmed=false` after reset. `/encoder/status` reported initialized encoder telemetry with `windowMs=40`.
+
+Takeaway: The speed-loop math is now visible without changing motor behavior. The implementation still infers signed pulses from the proposed balance command sign because the current encoder signal is single-channel pulse count, not quadrature direction.
+
+Next action: With the robot wheels-up, run short controlled balance-drive pulses and verify signed speed-loop deltas agree with physical forward/back motion on both wheels before mixing `speedLoopOutput` into motor commands.
+
+
+## 2026-06-30: Wheels-Up Speed Sign Validation
+
+Goal: Verify that speed-loop preview signs follow the active balance PWM direction during real wheels-up motion before allowing speed correction to affect motor output.
+
+Setup: Firmware commit `6043832` uploaded to the Arduino Nano ESP32 over `/dev/cu.usbmodem11201`. Robot reachable at `http://192.168.4.53`. Robot held wheels-up near upright. Encoders reset before calibration.
+
+Change: No control behavior change during the test. Used the new `/balance/status` fields `speedLoopSignedCommand` and `speedLoopDirectionSign` to make the inferred encoder direction explicit.
+
+Result: Calibration completed with `balanceControlSafetyOk=true`. Runtime output limit was reduced to `45 pwm`, then `/balance/arm` returned `armed=true`. During forward tilt, `speedLoopSignedCommand=45.000`, `speedLoopDirectionSign=1`, and signed encoder deltas were positive on both wheels, for example `speedLoopDeltaLeft=18`, `speedLoopDeltaRight=17`. During reverse correction, `speedLoopSignedCommand=-39.075`, `speedLoopDirectionSign=-1`, and signed deltas flipped negative/near-zero as the wheels changed direction, for example `speedLoopDeltaLeft=0`, `speedLoopDeltaRight=-1`. When pitch exceeded the `+/-22 deg` safe window, firmware forced `balanceOutputClamped=0`, reported `balanceSafetyReason="angle outside safe window"`, and auto-disarmed motor output. An explicit `/balance/disarm` was sent after the run.
+
+Takeaway: The sign telemetry is working and the inferred speed-loop sign agrees with commanded balance PWM direction during physical wheel motion. The safety gate also cut motor output as intended when the hand tilt went outside the safe range.
+
+Next action: Re-run a shorter wheels-up test with smaller tilts that stay inside the safe window, then decide whether to add a guarded preview mixer that reports `balanceOutputClamped - speedLoopOutput` without applying it to motor PWM yet.
+
+
+## 2026-06-30: Low-Scale Speed Mix Test
+
+Goal: Move faster from preview-only speed-loop telemetry to real wheels-up speed correction while preserving explicit arm, output-limit, and angle safety gates.
+
+Setup: Speed-mix firmware uploaded over `/dev/cu.usbmodem11201`. Robot held wheels-up near upright and reachable at `http://192.168.4.53`. Encoders reset, gyro calibrated, runtime config set to `/balance/config?limit=45&speedMix=1&speedScale=0.10`, then balance output armed.
+
+Change: Added runtime speed-loop motor mixing. Default boot behavior keeps `speedMixEnabled=false`. When enabled, motor PWM uses `balanceOutputClamped - speedLoopOutput * speedLoopMixScale`, clamped to the active balance output limit. `/balance/status` now reports `balanceMixedOutputRaw`, `balanceMixedOutputClamped`, `speedLoopMixEnabled`, and `speedLoopMixScale`.
+
+Result: Build and upload succeeded. With speed mix enabled at `0.10`, the robot produced visible wheels-up correction while staying inside the safe angle window during the sampled run. Mixed output diverged from raw balance output as expected: one sample reduced forward command from `balanceOutputClamped=36.235` to `balanceMixedOutputClamped=19.285`, and another increased reverse command from `balanceOutputClamped=-23.556` to `balanceMixedOutputClamped=-39.317`. Signed encoder deltas continued to follow the mixed command direction, including positive deltas for positive mixed PWM and negative deltas for negative mixed PWM. Explicit `/balance/disarm` was sent after the test.
+
+Takeaway: Low-scale speed-loop correction can now affect real motor PWM under the existing safety gates. At `speedScale=0.10`, the speed integral can still push the mixed output to the clamp during aggressive tilts, so the next tuning step should focus on smaller tilts, lower speed scale, or integral reset/anti-windup behavior before wheels-down balancing attempts.
+
+Next action: Add speed-loop integral reset behavior when disarmed or direction changes, then repeat the low-scale wheels-up mix test with `speedScale=0.05` to reduce clamp hits.
+
+
+## 2026-06-30: Speed-Loop Reset and Anti-Windup Test
+
+Goal: Tighten the speed-loop integration behavior before moving toward wheels-down balancing, so stale speed integral cannot carry across disarm, safety trips, encoder resets, near-zero commands, or direction reversals.
+
+Setup: Anti-windup firmware uploaded over `/dev/cu.usbmodem11201`. Robot held wheels-up near upright and reachable at `http://192.168.4.53`. Encoders reset, gyro calibrated, runtime config set to `/balance/config?limit=45&speedMix=1&speedScale=0.05`, then balance output armed.
+
+Change: Added speed-loop dynamic-state reset telemetry and logic. `/balance/status` now reports `speedLoopResetCount` and `speedLoopResetReason`. The speed loop resets while disarmed, while unsafe, after encoder baseline changes, around zero command, and on inferred direction changes. The speed-loop integral is only committed when the proposed speed correction would not drive the mixed output beyond the active PWM limit.
+
+Result: Build and upload succeeded. After reset and before arming, `/balance/status` reported `speedLoopResetReason="disarmed"`, `speedLoopIntegral=0.000`, and `speedLoopOutput=0.000`. During the wheels-up run, direction reversals produced `speedLoopResetReason="direction change"` and reset the integral close to zero before accumulating in the new direction. Example reverse samples showed `speedLoopIntegral=-8.089` with mixed output clamped at `-45`, rather than preserving the large stale integral seen in the previous `speedScale=0.10` run. Later positive-direction samples reset again, for example `speedLoopIntegral=1.215`, `speedLoopOutput=-7.966`, and `balanceMixedOutputClamped=25.043`. The robot remained inside the safety window during the sampled run. Explicit `/balance/disarm` was sent and volatile `speedMix` was disabled afterward.
+
+Takeaway: The speed loop now behaves more like a controlled inner state machine instead of an always-accumulating preview. This is closer to controls best practice for the current hardware constraints: reset hidden state at mode transitions, prevent integral windup against output clamps, and keep reset reasons observable during physical tests.
+
+Next action: Add a tighter balance-test profile for wheels-up/wheels-down transition work: lower default test scale, a shorter arm timeout or timed arm endpoint, and telemetry that reports clamp duty or saturation count during a run.
+
+## 2026-06-30: Bounded Timed Arm Run
+
+Goal: Make physical balance tests faster and safer by adding a time-bounded arm command plus run-level telemetry, so each motion trial has an automatic stop and a compact summary.
+
+Setup: Timed-arm firmware uploaded over `/dev/cu.usbmodem11201`. Robot reachable at `http://192.168.4.53`, held wheels-up near upright, gyro calibrated, and runtime config set to `/balance/config?limit=45&speedMix=1&speedScale=0.05`.
+
+Change: Added `/balance/arm?ms=<duration>` with a firmware cap of `BALANCE_ARM_MAX_RUNTIME_MS=5000`. `/balance/status` now reports arm runtime fields (`balanceArmStartedAtMs`, `balanceArmTimeoutMs`, `balanceArmElapsedMs`, `balanceArmRemainingMs`, `balanceRunSampleCount`) and mixed-output saturation fields (`balanceMixedOutputSaturated`, `balanceMixedOutputSaturationCount`, `balanceMixedOutputSaturationRatio`).
+
+Result: Build and upload succeeded. `/balance/arm?ms=1500` returned `armed=true` with `requestedTimeoutMs=1500`. Follow-up status polling showed the firmware had automatically disarmed motor output, with `balanceMotorOutputArmed=false`, `balanceMotorOutputEnabled=false`, `balanceDriveCommandSent=false`, `balanceRunSampleCount=209`, `balanceMixedOutputSaturationCount=0`, `balanceMixedOutputSaturationRatio=0.000`, and `balanceSafetyReason="ok"`. An explicit `/balance/disarm` was sent afterward and volatile `speedMix` was disabled.
+
+Takeaway: Short physical trials no longer depend on manual timing or dashboard latency to stop motor output. The run summary also makes each trial easier to compare: sample count confirms the run actually executed, and saturation ratio reports whether the speed mix spent time pinned at the PWM limit.
+
+Next action: Use timed arms as the default motion-test envelope. Run a few repeatable `1000-1500 ms` wheels-up trials with controlled small tilts, then move to the first wheels-down tethered test only after output saturation remains low and the direction/sign behavior stays consistent.
+
+## 2026-08-12: First Angle-Only Tether-Profile Trial
+
+Goal: Resume physical balance work with a bounded wheels-up trial and determine whether the conservative angle-only tether profile provides enough authority to judge correction behavior.
+
+Setup: Firmware commit `8ba5f24` uploaded over `/dev/cu.usbmodem101`; robot reachable at `http://192.168.4.53`; robot confirmed wheels-up and clear. Gyro calibration completed with zero failed reads. Encoders were reset and runtime config was `Kp=5.0`, `Ki=0.0`, `Kd=0.15`, output limit `45 pwm`, max angle `18 deg`, `motorSign=+1`, and speed mix disabled. The arm duration was `1000 ms`.
+
+Change: No firmware behavior changed for this trial. The robot was armed with `/balance/arm?ms=1000`, sampled during the run, then explicitly disarmed and stopped.
+
+Result: The timed arm was accepted and completed `139` control samples. At `7.005 deg` pitch the controller commanded both motors at approximately `+34 pwm`; at `11.663 deg` pitch it reached the `+45 pwm` limit. The operator observed both wheels moving, but the response was too small and conservative to judge useful correction behavior confidently. The final encoder totals were left `0`, right `7`, despite the visual observation that both wheels moved. After the run, pitch moved outside the configured `18 deg` window and the safety gate forced output to zero with reason `angle outside safe window`. An explicit disarm and motor stop were sent.
+
+Takeaway: The bounded arm path, automatic timeout, explicit stop, and angle safety gate worked. The 45-PWM/18-degree profile is too conservative for a useful wheels-up authority judgment. The sparse encoder totals from this short low-output run are not sufficient to conclude that the left motor failed, because both wheels moved visibly.
+
+Next action: Raise only the firmware arm ceiling from `45` to `60 pwm`, retain the previously validated `22 deg` angle window, and repeat one `1000 ms` wheels-up angle-only trial with speed mixing disabled.
+
+## 2026-08-12: 60-PWM Wheels-Up Trial Was Still Too Constrained
+
+Goal: Determine whether a modest increase from `45` to `60 pwm` and from an `18` to `22 deg` angle window made the wheels-up response observable enough to classify.
+
+Setup: Robot remained wheels-up and clear. Firmware with a `60 pwm` arm ceiling was built and uploaded after explicit approval. After reset, gyro calibration completed with zero failed reads; encoders were reset; runtime config was `Kp=5.0`, `Ki=0.0`, `Kd=0.15`, output limit `60 pwm`, max angle `22 deg`, `motorSign=+1`, and speed mix disabled. The arm duration was `1000 ms`.
+
+Change: The robot was armed with `/balance/arm?ms=1000`, sampled during the run, then explicitly disarmed and stopped.
+
+Result: The arm completed `139` samples. Commanded output rose from approximately `46 pwm` at `9.290 deg` pitch to `55 pwm` at `11.169 deg`, then reached the `60 pwm` limit. Pitch remained inside the `22 deg` window, the safety reason stayed `ok`, and the timed arm stopped normally. Encoder totals ended left `0`, right `4`. The operator still could not see enough useful behavior to classify the response: the one-second interval allowed only a slight tilt and produced little more than a brief motor buzz.
+
+Takeaway: The controller and safety mechanisms behaved as configured, but the experiment design was over-constrained for human observation. Repeating one-second trials would not produce useful evidence. The next wheels-up evaluation needs both enough motor authority to be visually obvious and enough time to move through forward, upright, and backward positions deliberately.
+
+Next action: Raise the wheels-up arm ceiling to `90 pwm` and use a `5000 ms`, `30 deg`, angle-only trial with `Ki=0` and speed mixing disabled. Retain sensor-health gating, the 80 ms motor-command watchdog, automatic timed disarm, and explicit stop.
+
+## 2026-08-12: Observable 90-PWM Wheels-Up Authority Test
+
+Goal: Produce an observable, human-usable wheels-up test that can establish correction direction and motor authority before the first tethered wheels-down attempt.
+
+Setup: After explicit approval, firmware with a `90 pwm` arm ceiling was uploaded over `/dev/cu.usbmodem101`. The robot remained wheels-up and clear. Gyro calibration completed with zero failed reads; encoders were reset; runtime config was `Kp=5.0`, `Ki=0.0`, `Kd=0.15`, output limit `90 pwm`, max angle `30 deg`, `motorSign=+1`, and speed mix disabled. The arm duration was `5000 ms`.
+
+Change: The operator deliberately tilted forward, returned through upright, and tilted backward during one `/balance/arm?ms=5000` run. Telemetry was sampled throughout, followed by explicit disarm and motor stop.
+
+Result: The timed run completed `698` control samples with zero sensor failures. Forward-side output rose to `+84 pwm` and then `+90 pwm`; after crossing through upright, reverse-side output reached `-90 pwm`. Encoder totals reached left `656` and right `835`, resolving the earlier low-output ambiguity by proving both wheels were active. The operator confirmed that correction was visibly in the correct direction for both forward and backward tilt and that motion was controlled rather than violent. Automatic timeout worked. After the run, movement briefly crossed the `30 deg` window and the safety gate forced output to zero; an explicit disarm and motor stop were also sent.
+
+Takeaway: The 90-PWM, five-second envelope is the first resumed test that produced clear physical evidence. Motor polarity, bidirectional correction, sensor health, encoder activity, timed shutdown, and angle gating are all adequate to advance from wheels-up observation to the first overhead-tether wheels-down attempt.
+
+Next action: Rig a slack overhead tether with both wheels touching freely, calibrate upright, and run one `5000 ms` angle-only trial at `Kp=5.0`, `Ki=0.0`, `Kd=0.15`, output limit `90 pwm`, max angle `22 deg`, and speed mixing disabled.
+
+## 2026-08-12: First Wheels-Down Run Inconclusive Due to Tether Support
+
+Goal: Attempt the first wheels-down balance run using the validated angle-only controller and overhead tether.
+
+Setup: Both wheels touched the floor and the robot was held upright for calibration. Runtime config was `Kp=5.0`, `Ki=0.0`, `Kd=0.15`, output limit `90 pwm`, max angle `22 deg`, `motorSign=+1`, and speed mix disabled. The arm duration was `5000 ms`.
+
+Change: Two wheels-down runs were attempted. The first remained near upright with no encoder movement. The tether was then lengthened and a second run included a small nudge after release.
+
+Result: The first run completed `695` samples with pitch between roughly `-0.2` and `+1.6 deg`, PWM below `8`, and zero encoder counts; the operator confirmed afterward that the tether was not fully slack, so this was external support rather than balancing evidence. In the second run, pitch moved through approximately `+9.8`, `-7.5`, `+4.2`, `+2.6`, `-1.1`, and `-2.0 deg`; encoder totals reached left `83` and right `102`; safety remained `ok`; and the timed stop completed normally. The operator believed the tether still caught the robot during the second run, so it is also inconclusive as an unassisted balance demonstration.
+
+Takeaway: The controller produced a damped correction sequence on the floor, but tether geometry prevented a valid claim of self-balancing. The five-second window was also too short to distinguish sustained balance from a tether catch confidently.
+
+Next action: Increase the maximum timed arm and dashboard tether profile to `10000 ms`, lengthen the tether so it remains slack through normal motion, and repeat the wheels-down angle-only run without counting any trial where the tether carries or catches the chassis.
+
+## 2026-08-12: Wide-Window Tuning Exposed Speed-Mix Feedback Sign
+
+Goal: Keep the controller active long enough to make the wheels-down failure visible, then determine whether stronger angle gains or the existing low-scale speed mixer reduce the tether-to-tether oscillation.
+
+Setup: The tether was lengthened and runtime config used a `45 deg` angle window, `90 pwm` limit, and `10000 ms` timed arm. The first wide-window run retained `Kp=5.0`, `Kd=0.15`, and speed mix disabled. A second run used `Kp=10.0`, `Kd=0.35`, and speed mix disabled. A third used the stronger gains plus `speedMix=1` and `speedScale=0.05`.
+
+Change: No firmware behavior changed before these runs. Runtime angle and gain settings were adjusted within existing bounds so the physical failure mode could be observed instead of being hidden by an early cutoff.
+
+Result: With the original gains, the robot fell into one tether side, rolled through upright, and fell into the opposite side. Telemetry swung from approximately `-33` to `+37 deg` while output saturated at `-90` and `+90 pwm`. Doubling `Kp` moved the wheels earlier but still produced a large overshoot to approximately `+39 deg`. Enabling the existing `0.05` speed mix made the response worse: at `-3.4 deg` it increased output magnitude from `-24.6` to `-28.5 pwm`, and at `+6.8 deg` it increased `+75.4` to `+80.4 pwm`. The run reached a mixed-output saturation ratio of `0.606` and fell into the tether in about `2.8 s`.
+
+Takeaway: The wide angle window was useful because it exposed the actual controller behavior. The angle-only loop is underdamped, but the current ESP32 port's speed mixer also reinforces measured wheel motion instead of reducing same-direction drive. The original Elegoo expression uses the same textual subtraction, but the mounted-axis and motor-direction conventions of this port require the effective feedback contribution to be reversed.
+
+Next action: Change the port mixer from `balance - speedOutput * scale` to `balance + speedOutput * scale`, add a host regression test proving positive wheel-speed correction reduces positive drive and vice versa, then validate the reversed contribution during a visible five-second wheels-up run before returning to the tethered floor test.
+
+## 2026-08-12: Corrected Speed-Mix Sign Wheels-Up Validation
+
+Goal: Prove that the port-specific speed-mix sign change reduces same-direction wheel drive before returning the changed feedback loop to the floor.
+
+Setup: Firmware changed the effective mixer to `balanceOutput + speedLoopOutput * speedScale` and added a host regression test for positive and negative drive reduction. The robot was held wheels-up, calibrated, and configured with `Kp=10.0`, `Ki=0.0`, `Kd=0.35`, output limit `90 pwm`, max angle `45 deg`, speed mix enabled, and `speedScale=0.05`. The arm duration was `5000 ms`.
+
+Change: The operator tilted through both directions during one timed wheels-up run while telemetry compared angle-only and mixed output.
+
+Result: The run completed `694` samples with both wheels active, zero mixed-output saturation, and zero sensor failures. The corrected contribution consistently reduced same-direction command magnitude after wheel speed developed: `-90.0` became `-85.5 pwm`, `+90.0` became `+83.8` and `+82.6 pwm`, another `-90.0` became `-83.1 pwm`, and `-64.3` became `-57.9 pwm`. Direction changes reset speed-loop state as designed, and timed disarm completed normally.
+
+Takeaway: The corrected speed feedback now has the intended damping effect on this port in both directions. The previous tether run's positive-feedback behavior is fixed, and the change is ready for a controlled wheels-down tether test.
+
+Next action: Return the robot wheels-down under the slack tether, calibrate upright, and run one `10000 ms` test with `Kp=10.0`, `Ki=0.0`, `Kd=0.35`, output limit `90 pwm`, max angle `45 deg`, speed mix enabled, and `speedScale=0.05`.
+
+## 2026-08-12: Operator-Observed Delayed Motor Response
+
+Goal: Explain why wheels appeared to respond roughly one second after the chassis tilt despite a measured balance-loop period near `7 ms`.
+
+Setup: Corrected speed-mix firmware during the five-second wheels-up validation. The operator deliberately tilted in both directions and reported that the wheels kicked noticeably after the tilt, sometimes after the chassis had already crossed toward the other side.
+
+Finding: The balance task publishes approximately every `7 ms`, while the motor task can consume one queue entry roughly every `10 ms` because it waits for a message and then delays `5 ms`. The shared motor queue held eight FIFO entries. This lets production outrun consumption, stores stale balance commands, and rejects newer commands when full. The same full queue could also reject a stop request. PID and mixer telemetry can therefore be current while the motor driver is applying an older command.
+
+Change: Convert the motor command queue to a one-element latest-value mailbox and route balance, manual, and stop submissions through `xQueueOverwrite`. The motor task now receives the newest available command instead of draining a historical FIFO backlog.
+
+Validation: `./scripts/check.sh` passed, the firmware was uploaded, and a `10000 ms` wheels-up reversal test exercised both directions. Telemetry followed the commanded reversals, both encoders remained active, and automatic angle-limit disarm worked. The operator still perceived substantial physical delay between tilt and visible wheel response.
+
+Takeaway: The mailbox change removes a real stale-command and rejected-stop failure mode, but it did not account for all of the observed lag. Do not resume blind floor tuning yet.
+
+Next action: Add an automated wheels-up motor characterization that measures each side and direction across PWM, including the first encoder response and the motor-command application time. Use those measurements to separate electrical/mechanical deadband from software latency before changing controller gains.
+
+## 2026-08-12: Automated Wheels-Up Motor Characterization
+
+Goal: Measure whether the observed delayed response comes from command delivery, motor startup deadband, or left/right asymmetry before changing the balance controller again.
+
+Setup: Both wheels were fully clear. Firmware exposed the latest PWM actually applied by the motor task plus raw encoder snapshots. `tools/motor_characterize.py` disarmed balance output and drove one wheel at a time in both directions for `450 ms` at `20, 30, 40, 50, 60, 75, 90 pwm`, stopping and resetting encoders between cases. Firmware bounded the endpoint to `+/-90 pwm` and `600 ms` and rejected tests while balance output was armed.
+
+Result: Applied-command lag was `0-6 ms` across all `28` cases, ruling out a human-visible software scheduling delay. Motion below `40 pwm` was absent or inconsistent: for example, left-reverse moved at `20 pwm` but stalled at `30 pwm`, while right-forward produced no pulse at `20 pwm` and only one late pulse at `30 pwm`. Every side/direction case moved consistently from `40 pwm` upward. At `40 pwm`, first observed pulses arrived in `27-90 ms` and the four cases produced `23-29` pulses during the drive window. At `90 pwm`, left/right produced `102/95` forward pulses and `93/89` reverse pulses during the drive window, showing modest rather than extreme side asymmetry. The final state reported `leftPwm=0`, `rightPwm=0`, and `running=false`. Invalid `91 pwm` and missing-parameter requests both returned HTTP `400` without motion.
+
+Takeaway: The visible delay is dominated by controller effort remaining inside the motor's roughly `40 pwm` reliable-start threshold, not by the firmware command path. With `Kp=10`, the proportional term alone does not reach reliable actuation until roughly `4 deg` of error. That is enough falling distance to look and behave late.
+
+Next action: Add a measured responsive angle-only profile with `Kp=35`, `Ki=0`, `Kd=0.5`, output limit `90 pwm`, max angle `45 deg`, and speed mixing disabled. At that gain, about `1.15 deg` of proportional error reaches the measured reliable-start threshold. Validate it wheels-up with small `+/-5 deg` reversals before any tethered floor run.
+
+## 2026-08-12: Measured Responsive Profile Wheels-Up Run
+
+Goal: Verify that the angle controller crosses the measured `40 pwm` reliable-start threshold close to upright instead of waiting for roughly `4 deg` of error.
+
+Setup: Wheels-up, stationary gyro calibration complete, `Kp=35`, `Ki=0`, `Kd=0.5`, output limit `90 pwm`, max angle `45 deg`, speed mixing disabled, and a `10000 ms` timed arm. The operator rocked the chassis through repeated reversals while sampled telemetry recorded pitch, gyro rate, PWM, arm state, and run sample count.
+
+Result: Firmware response was immediate and continuous through the run. At `+1.130 deg` with `+11.552 dps`, the controller commanded `+45 pwm`, above the measured reliable-start threshold. At `-2.276 deg` it commanded `-80 pwm`. The hand motion reached approximately `-25.9` to `+24.2 deg`, so the controller spent much of the run at the `+/-90 pwm` clamp. The run completed `1390` control samples and timed disarm worked. The operator's physical promptness assessment is still required before moving wheels-down.
+
+Telemetry issue found: The reported saturation flag remained false even when the raw angle output exceeded the limit, because saturation was evaluated after the angle term had already been clamped. Update the saturation calculation to count either raw angle output or post-mix output exceeding the active limit, and retain a host regression test for both signs.
+
+Next action: Confirm the operator-observed response was prompt and correct. Build/upload the saturation fix, then repeat a smaller-amplitude wheels-up run if needed; otherwise use the responsive angle-only profile for the next slack-tether floor trial.
+
+## 2026-08-12: High-Rate Responsive Profile Validation
+
+Goal: Resolve the remaining subjective reversal-delay question with an onboard trace fast enough to compare estimated angle, requested PWM, actually applied PWM, and encoder motion without HTTP polling aliasing.
+
+Change: Add a 512-sample balance trace ring recorded at `20 ms` intervals. Each timed arm automatically clears and starts the trace. Samples include raw accelerometer pitch, filtered pitch, gyro rate, raw/clamped controller output, requested PWM, motor-task-applied PWM and timestamp, encoder totals, arm/safety state, and saturation. Recording retains five post-disarm samples and `/balance/trace` streams the completed JSON.
+
+Setup: Firmware included the corrected saturation calculation and onboard recorder. Both wheels were clear, gyro calibration completed while stationary, and the robot used the same measured responsive profile: `Kp=35`, `Ki=0`, `Kd=0.5`, limit `90 pwm`, max angle `45 deg`, speed mixing disabled, and a `10000 ms` timed arm. The operator deliberately rocked through repeated reversals.
+
+Result: The trace captured `465` armed samples over `9991 ms` plus five post-stop samples. Pitch ranged from `-22.381` to `+13.246 deg`; the requested PWM changed sign `13` times. Requested and actually applied left/right PWM matched in every armed trace sample, with a maximum observed applied-command age of `1 ms`. Encoder gains were left `1481` and right `1492` pulses. Corrected saturation telemetry counted `371/465` armed samples (`79.8%`), consistent with deliberate large-amplitude rocking against the `90 pwm` cap. Automatic timed disarm and the post-stop `0 pwm` state were captured. The operator reported: “Wow that was a lot more responsive.”
+
+Takeaway: The responsive `Kp=35`, `Kd=0.5` angle profile is now physically validated wheels-up. The trace recorder and saturation fix did not alter the control law; they prove that reversals reach the motor task without software delay. The improvement over the earlier low-gain behavior comes from crossing the measured motor startup threshold near upright. The high saturation fraction belongs to this deliberately large wheels-up rocking run and must be reevaluated during the floor trial rather than treated as acceptable steady balance behavior.
+
+Next action: Put the robot wheels-down under the slack overhead tether, recalibrate upright, apply the same responsive angle-only profile, and run one `10000 ms` floor trial. Classify whether it catches, oscillates, or saturates, then read `/balance/trace` before changing gains.
+
+## 2026-08-12: Responsive Profile First Traced Floor Trial
+
+Goal: Determine whether the wheels-up-validated responsive angle profile can catch the robot on the floor under the slack overhead tether.
+
+Setup: Wheels-down, tether slack at upright, stationary upright gyro calibration, `Kp=35`, `Ki=0`, `Kd=0.5`, limit `90 pwm`, max angle `45 deg`, speed mixing disabled, and a requested `10000 ms` arm. Firmware was `d82b4fb` with the onboard `20 ms` trace. The operator fully released the robot.
+
+Result: The run did not balance and auto-disarmed after `6252 ms` when estimated pitch approached the `-45 deg` angle gate. The growing oscillation included approximately `-5.7`, `+14.1`, `-27.9`, `+32.0`, and `-44.4 deg` peaks. The controller changed requested sign four times and motor-task-applied PWM matched requested PWM in `292/293` armed trace samples; after the one initial startup sample, maximum observed applied-command age was `1 ms`. The controller saturated for `268/293` armed samples (`91.5%`). Raw requested output reached about `-1603` to `+1166 pwm` but was clipped to `+/-90 pwm`. Encoders gained left `1201` and right `1126` pulses before disarm. The operator reported that it seemed slow again.
+
+Takeaway: No controller setting reverted and there is no material software command delay. Free-spinning wheels-up response hid the floor-load authority limit. The floor run is actuator-limited at the current `90 pwm` ceiling; adding proportional gain cannot help while output is already clipped. The growing alternating peaks classify this run as an under-authority unstable oscillation, not a successful catch.
+
+Next action: Raise the bounded arm and characterization ceiling to `160 pwm` while retaining the same gains, angle gate, timed arm, sensor gates, latest-command mailbox, and explicit stop. Validate `160 pwm` in all four wheel/direction cases wheels-up, then run a short wheels-up responsive-profile reversal test before repeating the tethered floor trial. Change authority only so its effect is identifiable.
+
+## 2026-08-12: 160-PWM Authority Wheels-Up Validation
+
+Goal: Validate the higher motor-authority ceiling independently before using it to address the `90 pwm`-saturated floor run.
+
+Change: Raise `BALANCE_ARM_MAX_OUTPUT_LIMIT` and the bounded signed-motor characterization ceiling from `90` to `160 pwm`. Keep the `600 ms` characterization-duration cap, `10000 ms` balance-arm cap, `45 deg` angle gate, sensor gates, latest-command mailbox, command watchdog, and explicit stop. Update the dashboard responsive profile to retain `Kp=35`, `Ki=0`, `Kd=0.5`, speed mixing disabled, while changing only its output limit to `160 pwm`.
+
+Setup: The operator explicitly approved the `160 pwm` ceiling and confirmed both wheels were clear. The board restarted disarmed. First, each wheel/direction case ran alone at `160 pwm` for `450 ms`. Then the robot was calibrated while stationary and held wheels-up for a `5000 ms` responsive-profile reversal run.
+
+Result: All four direct cases passed: application lag was `0-4 ms`, first observed encoder motion was `29-41 ms`, and driven pulse counts were left forward `191`, left reverse `175`, right forward `178`, and right reverse `185`. Every case stopped automatically. The controller run captured `234` armed samples over `4991 ms`, pitch from `-15.281` to `+8.343 deg`, two requested sign reversals, zero requested/applied PWM mismatches, at most `1 ms` observed applied-command age, left/right encoder gains `2075/2039`, and timed stop. Deliberate hand motion saturated `190/234` samples at the new ceiling; that confirms the ceiling was exercised rather than indicating a balance result.
+
+Takeaway: `160 pwm` is validated electrically and mechanically in all four wheel/direction cases and through the actual balance command path. The higher ceiling is ready for a same-gain slack-tether floor comparison. Do not change `Kp`, `Kd`, speed mix, or the angle gate during that comparison.
+
+Next action: Put the robot wheels-down under the slack overhead tether, recalibrate upright, apply `Kp=35`, `Ki=0`, `Kd=0.5`, limit `160 pwm`, max angle `45 deg`, and speed mixing disabled, then run one `10000 ms` arm and compare its onboard trace against the `90 pwm` floor run.
+
+## 2026-08-12: 160-PWM Responsive Profile Floor Trial
+
+Goal: Determine whether raising only the actuator ceiling from `90` to `160 pwm` supplies enough floor-load authority for the previously saturated responsive angle controller to catch the robot.
+
+Setup: Wheels-down under the overhead tether, stationary upright gyro calibration, `Kp=35`, `Ki=0`, `Kd=0.5`, limit `160 pwm`, max angle `45 deg`, speed mixing disabled, and a requested `10000 ms` arm. Control and telemetry were performed wirelessly at `192.168.4.53`; firmware was `86af765`.
+
+Result: The robot did not balance. It crossed the angle gate and auto-disarmed after approximately `2.87 s`, completing `400` control samples. Output saturated for `349/400` samples (`87.3%`). The trace moved from roughly `-3.4 deg` through `+35.0 deg`, back through upright, and reached `-45.7 deg`; requested and applied PWM matched throughout the captured armed samples. Encoder totals increased by approximately `2718` left and `1853` right, a large floor-run asymmetry despite identical commands. The operator observed that motor onset was extremely fast and jerky and caused visible wheel/tire slip.
+
+Takeaway: `160 pwm` provides ample actuator motion but does not stabilize the current `Kp=35` floor profile. The controller reaches full output near `4.6 deg`, breaks traction, and produces a faster underdamped oscillation than the `90 pwm` trial. This is an overdriven, actuator-saturated floor response rather than software latency. Do not repeat this profile unchanged.
+
+Next action: Change only proportional gain from `Kp=35` to `Kp=20`, retaining `Ki=0`, `Kd=0.5`, the `160 pwm` reserve, `45 deg` gate, speed mixing disabled, and the `10000 ms` bounded arm. This moves the reliable-start threshold to about `2 deg` and full proportional output to `8 deg`, testing whether a less abrupt torque rise preserves traction without restoring the old delayed response.
+
+## 2026-08-12: Reduced-Kp 160-PWM Floor Trial
+
+Goal: Determine whether reducing proportional gain from `35` to `20` preserves the available `160 pwm` reserve while avoiding the abrupt, traction-breaking onset of the previous floor trial.
+
+Setup: Wheels-down under the overhead tether, stationary upright gyro calibration, `Kp=20`, `Ki=0`, `Kd=0.5`, limit `160 pwm`, max angle `45 deg`, speed mixing disabled, and a requested `10000 ms` arm. The robot started at approximately `0.17 deg` with zero encoder counts and healthy sensors.
+
+Result: The robot did not balance and auto-disarmed after approximately `2.18 s` at `-47.3 deg`, completing `304` control samples. Saturation fell from the prior `87.3%` to `66.4%`, but the chassis still raced to one tether boundary, reversed after a visible delay, and raced to the other boundary. At full tether extension the tires continued slipping and the wheels spun for roughly another half second. The trace began near `+1.1 deg`, reached approximately `+20.3 deg`, crossed upright around `1.44 s`, and then accelerated through the negative angle gate. Requested and applied PWM matched after the initial sample. Encoder gains were approximately `1811` left and `1202` right despite identical commands.
+
+Takeaway: Lower proportional gain reduced clamp duty but did not address the dominant failure: the angle-only controller continues driving rapidly while wheel speed accumulates, so it brakes too late and reverses only after a large excursion. Motor authority and proportional onset have now been bracketed; further angle-only gain changes are unlikely to produce a stable catch. The persistent floor-only encoder asymmetry also indicates slip or unequal traction rather than the balanced free-wheel motor behavior measured earlier.
+
+Next action: Keep `Kp=20`, `Ki=0`, `Kd=0.5`, limit `160 pwm`, and the `45 deg` gate, then enable the already sign-corrected encoder speed feedback at `speedScale=0.20`. This introduces the missing wheel-speed damping without changing the angle controller and should begin reducing drive within one approximately `56 ms` speed-loop interval.
+
+## 2026-08-12: Strong Speed-Damping Floor Trial
+
+Goal: Test whether corrected encoder speed feedback stops the angle-only controller from racing and spinning its wheels at the tether boundaries.
+
+Setup: After a power cycle recovered an IMU that had become stuck at all-zero raw readings, the robot was calibrated upright. The held upright pitch of `-5.19 deg` was applied as the runtime setpoint, producing approximately zero requested output before release. Runtime control was `Kp=20`, `Ki=0`, `Kd=0.5`, limit `160 pwm`, max angle `45 deg`, speed mixing enabled, and `speedScale=0.20`.
+
+Result: The robot did not balance and auto-disarmed after approximately `4.0 s` at `-45.9 deg`. It completed `556` controller samples and raw-angle saturation fell to `111/556` (`20.0%`). Speed feedback materially reduced drive: during one positive excursion, an angle request near `+260 pwm` became about `+130 pwm`; near the final negative angle limit, a raw request near `-843 pwm`, angle-clamped to `-160 pwm`, became approximately `-72 pwm`. The operator observed less racing and tire slip, confirming the damping acted physically, but the chassis still moved quickly to one tether boundary and then shot toward the other. Encoder totals reached roughly `876` left and `483` right before the angle trip, preserving the large floor-only asymmetry.
+
+Takeaway: Corrected speed feedback addresses the observed wheel runaway, but `speedScale=0.20` removes too much catch authority at large angle. The useful damping range is now bracketed between `0` (runaway and late reversal) and `0.20` (less slip but over-braked). The tighter tether geometry installed after this run will reduce available angle and linear runway; it is acceptable as a tuning catch fixture but any taut-tether interval cannot count as self-balancing evidence.
+
+Next action: Keep all angle-controller settings and the calibrated setpoint unchanged, reduce only `speedScale` from `0.20` to `0.10`, recalibrate upright, and repeat the bounded floor trial. Compare wheel slip, mixed PWM at large error, reversal timing, angle-trip duration, and whether the tighter tether supports the chassis.
+
+## 2026-08-12: Tighter-Tether 0.10 Speed-Damping Trial
+
+Goal: Test the midpoint between angle-only wheel runaway and the over-braked `speedScale=0.20` response.
+
+Setup: The tripod tether had been shortened, reducing both fall angle and available horizontal wheel travel. The robot was recalibrated at a `-0.67 deg` upright setpoint. Runtime control was `Kp=20`, `Ki=0`, `Kd=0.5`, limit `160 pwm`, max angle `45 deg`, speed mixing enabled, and `speedScale=0.10`.
+
+Result: The arm completed the full `9.98 s` with `466` armed trace samples because the tighter tether prevented an angle-limit trip. Pitch remained between approximately `-39.2` and `+31.6 deg`, mixed PWM reached about `-150/+151`, and raw-angle saturation occurred in `105/466` trace samples. Requested and applied PWM matched in all armed samples. Encoder gains were `2295` left and `1406` right. The operator observed the chassis hanging at tether endpoints with the wheels spinning.
+
+Takeaway: This was not balancing evidence. The tether became structural support and restricted the wheel translation needed to move under the center of mass. `speedScale=0.10` also permits substantial endpoint drive and wheel spin. The persistent approximately `1.6x` left/right encoder difference remains present under floor load.
+
+Next action: Restore a slack-at-upright tether with more horizontal runway and catch before the `45 deg` software gate, then test the bracket midpoint `speedScale=0.15`. Do not interpret a full-duration run as success when the tether is taut.
+
+## 2026-08-12: 0.15 Midpoint Damping Exposed Loaded Wheel Mismatch
+
+Goal: Test the midpoint damping value after bracketing `0.10` as too permissive and `0.20` as over-braked.
+
+Setup: The robot was recalibrated upright at a `-2.77 deg` setpoint with `Kp=20`, `Ki=0`, `Kd=0.5`, limit `160 pwm`, max angle `45 deg`, speed mixing enabled, and `speedScale=0.15`.
+
+Result: The robot did not balance and auto-disarmed after approximately `1.35 s`. Armed pitch moved from about `-4.5 deg` to `-21.6 deg`, reversed through upright, and reached `+43.7 deg` before the next sample crossed the angle gate. Mixed PWM ranged from approximately `-141` to `+159`, and `41/64` armed trace samples were marked saturated. Requested and applied PWM differed only in the initial startup sample. Encoder gains were `939` left and `529` right. The high-rate trace exposed the mismatch immediately: at identical `-35 pwm` commands the left encoder had already counted `17` pulses while the right had counted only `1`; the imbalance persisted at higher commands.
+
+Takeaway: The dominant remaining problem is unequal loaded wheel response, not a missing global damping value. Identical left/right PWM produces severe yaw/traction asymmetry on the floor even though prior wheels-up `160 pwm` characterization was balanced. Continuing scalar gain or damping sweeps would tune around a mechanical/actuator mismatch instead of controlling it.
+
+Next action: Stop floor gain sweeps. Add guarded per-wheel speed matching/deadband compensation with telemetry and host tests, and reject all-zero IMU frames as unhealthy. Build and upload over USB, validate the compensation wheels-up and in a supported loaded straight-drive test, then return to tethered balancing.

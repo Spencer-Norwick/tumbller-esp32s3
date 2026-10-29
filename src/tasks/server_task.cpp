@@ -7,14 +7,35 @@
 #include <freertos/task.h>
 
 #include "task_common.hpp"
+#include "balance_task.hpp"
+#include "motor_task.hpp"
 #include "server_task.hpp"
 
 static WiFiServer server(80);
+static constexpr unsigned long CLIENT_HEADER_TIMEOUT_MS = 250;
+static constexpr size_t MAX_HEADER_BYTES = 1536;
 static void serverTask(void *pvParameters);
 static void sendJson(WiFiClient &client, const char *status, const String &body);
+static const char *jsonBool(bool value);
+static String hexByte(uint8_t value);
 static bool handleInfoRequest(WiFiClient &client, const String &header);
+static bool handleI2cScanRequest(WiFiClient &client, const String &header);
+static bool handleImuRawRequest(WiFiClient &client, const String &header);
+static bool handleEncoderStatusRequest(WiFiClient &client, const String &header);
+static bool handleEncoderResetRequest(WiFiClient &client, const String &header);
+static bool handleBalanceConfigRequest(WiFiClient &client, const String &header);
+static bool handleBalanceArmRequest(WiFiClient &client, const String &header);
+static bool handleBalanceDisarmRequest(WiFiClient &client, const String &header);
+static bool handleBalanceStatusRequest(WiFiClient &client, const String &header);
+static bool handleBalanceTraceRequest(WiFiClient &client, const String &header);
+static bool handleBalanceCalibrateRequest(WiFiClient &client, const String &header);
 static bool handleSensorRequest(WiFiClient &client, const String &header);
+static bool handleMotorMeasurementRequest(WiFiClient &client, const String &header);
+static bool handleMotorSignedTestRequest(WiFiClient &client, const String &header);
 static bool handleMotorRequest(WiFiClient &client, const String &header);
+static bool queryFloatParam(const String &header, const char *name, float &value);
+static bool queryFloatParamForPath(const String &header, const char *path, const char *name, float &value);
+static float clampConfigValue(float value, float minValue, float maxValue);
 
 void server_task_start() {
   // Launch a dedicated server task pinned to core 0
@@ -24,7 +45,6 @@ void server_task_start() {
 
 static void serverTask(void *pvParameters) {
   (void)pvParameters;
-  const long timeoutTime = 2000; // client timeout window (ms)
   for (;;) {
     // Blink heartbeat LED once per second to show the task is alive
     {
@@ -42,26 +62,45 @@ static void serverTask(void *pvParameters) {
       continue;
     }
 
+    client.setTimeout(CLIENT_HEADER_TIMEOUT_MS);
     unsigned long currentTime = millis();
     unsigned long previousTime = currentTime;
-#ifdef USE_SERIAL
+#if defined(USE_SERIAL) && defined(HTTP_SERIAL_DEBUG)
     Serial.println("New Client.");
 #endif
         String currentLine = ""; // collect the current header line
         String header;            // full HTTP header buffer
-    while (client.connected() && currentTime - previousTime <= timeoutTime) {
+    while (client.connected() && currentTime - previousTime <= CLIENT_HEADER_TIMEOUT_MS) {
       currentTime = millis();
       if (client.available()) {
         char c = client.read();
-#ifdef USE_SERIAL
+#if defined(USE_SERIAL) && defined(HTTP_SERIAL_DEBUG)
         Serial.write(c);
 #endif
         header += c;
+        if (header.length() > MAX_HEADER_BYTES) {
+          client.println("HTTP/1.1 431 Request Header Fields Too Large");
+          client.println("Connection: close");
+          client.println();
+          break;
+        }
         if (c == '\n') {
           if (currentLine.length() == 0) {
             // End of headers: dispatch by path (info → JSON, sensor → JSON, motor → HTML)
             if (handleInfoRequest(client, header)) break;
+            if (handleI2cScanRequest(client, header)) break;
+            if (handleImuRawRequest(client, header)) break;
+            if (handleEncoderStatusRequest(client, header)) break;
+            if (handleEncoderResetRequest(client, header)) break;
+            if (handleBalanceConfigRequest(client, header)) break;
+            if (handleBalanceArmRequest(client, header)) break;
+            if (handleBalanceDisarmRequest(client, header)) break;
+            if (handleBalanceCalibrateRequest(client, header)) break;
+            if (handleBalanceTraceRequest(client, header)) break;
+            if (handleBalanceStatusRequest(client, header)) break;
             if (handleSensorRequest(client, header)) break;
+            if (handleMotorMeasurementRequest(client, header)) break;
+            if (handleMotorSignedTestRequest(client, header)) break;
             if (handleMotorRequest(client, header)) break;
 
             // Unknown route
@@ -75,11 +114,13 @@ static void serverTask(void *pvParameters) {
         } else if (c != '\r') {
           currentLine += c;
         }
+      } else {
+        vTaskDelay(pdMS_TO_TICKS(1));
       }
     }
     header = "";
     client.stop();
-#ifdef USE_SERIAL
+#if defined(USE_SERIAL) && defined(HTTP_SERIAL_DEBUG)
     Serial.println("Client disconnected.");
     Serial.println("");
 #endif
@@ -95,6 +136,19 @@ static void sendJson(WiFiClient &client, const char *status, const String &body)
   client.println(body);
 }
 
+static const char *jsonBool(bool value) {
+  return value ? "true" : "false";
+}
+
+static String hexByte(uint8_t value) {
+  String result = "0x";
+  if (value < 16) {
+    result += "0";
+  }
+  result += String(value, HEX);
+  return result;
+}
+
 static bool handleInfoRequest(WiFiClient &client, const String &header) {
   // /info → report hostname and current IP as JSON
   if (header.indexOf("GET /info") < 0) return false;
@@ -102,6 +156,389 @@ static bool handleInfoRequest(WiFiClient &client, const String &header) {
   String jsonResponse = "{\"hostname\":\"" + String(WIFI_HOSTNAME) + "\",\"ip\":\"" + ipStr + "\"}";
   sendJson(client, "HTTP/1.1 200 OK", jsonResponse);
   return true;
+}
+
+static bool handleI2cScanRequest(WiFiClient &client, const String &header) {
+  // /i2c/scan -> list responding 7-bit I2C addresses for board bring-up.
+  if (header.indexOf("GET /i2c/scan") < 0) return false;
+
+  if (!i2c_lock(pdMS_TO_TICKS(250))) {
+    sendJson(client, "HTTP/1.1 503 Service Unavailable", "{\"error\":\"I2C bus busy\"}");
+    return true;
+  }
+
+  String jsonResponse = "{\"addresses\":[";
+  bool first = true;
+  for (uint8_t address = 1; address < 127; address++) {
+    Wire.beginTransmission(address);
+    uint8_t error = Wire.endTransmission();
+    if (error == 0) {
+      if (!first) {
+        jsonResponse += ",";
+      }
+      jsonResponse += "\"0x";
+      if (address < 16) {
+        jsonResponse += "0";
+      }
+      jsonResponse += String(address, HEX);
+      jsonResponse += "\"";
+      first = false;
+    }
+  }
+  i2c_unlock();
+  jsonResponse += "]}";
+  sendJson(client, "HTTP/1.1 200 OK", jsonResponse);
+  return true;
+}
+
+static bool handleImuRawRequest(WiFiClient &client, const String &header) {
+  if (header.indexOf("GET /imu/raw") < 0) return false;
+
+  BalanceTelemetry telemetry;
+  balance_get_raw(telemetry);
+  String jsonResponse = "{";
+  jsonResponse += "\"imuReady\":" + String(jsonBool(telemetry.imuReady));
+  jsonResponse += ",\"lastReadOk\":" + String(jsonBool(telemetry.lastReadOk));
+  jsonResponse += ",\"imuAddress\":\"" + hexByte(telemetry.imuAddress) + "\"";
+  jsonResponse += ",\"whoAmI\":\"" + hexByte(telemetry.whoAmI) + "\"";
+  jsonResponse += ",\"whoAmICompatible\":" + String(jsonBool(telemetry.whoAmICompatible));
+  jsonResponse += ",\"updatedAtMs\":" + String(telemetry.updatedAtMs);
+  jsonResponse += ",\"lastError\":\"" + String(telemetry.lastError) + "\"";
+  jsonResponse += ",\"raw\":{";
+  jsonResponse += "\"ax\":" + String(telemetry.raw.ax);
+  jsonResponse += ",\"ay\":" + String(telemetry.raw.ay);
+  jsonResponse += ",\"az\":" + String(telemetry.raw.az);
+  jsonResponse += ",\"gx\":" + String(telemetry.raw.gx);
+  jsonResponse += ",\"gy\":" + String(telemetry.raw.gy);
+  jsonResponse += ",\"gz\":" + String(telemetry.raw.gz);
+  jsonResponse += "}}";
+  sendJson(client, "HTTP/1.1 200 OK", jsonResponse);
+  return true;
+}
+
+static bool handleEncoderStatusRequest(WiFiClient &client, const String &header) {
+  if (header.indexOf("GET /encoder/status") < 0) return false;
+
+  EncoderTelemetry telemetry;
+  motor_get_encoder_status(telemetry);
+  String jsonResponse = "{";
+  jsonResponse += "\"initialized\":" + String(jsonBool(telemetry.initialized));
+  jsonResponse += ",\"updatedAtMs\":" + String(telemetry.updatedAtMs);
+  jsonResponse += ",\"windowMs\":" + String(telemetry.windowMs);
+  jsonResponse += ",\"totalLeft\":" + String(telemetry.totalLeft);
+  jsonResponse += ",\"totalRight\":" + String(telemetry.totalRight);
+  jsonResponse += ",\"deltaLeft\":" + String(telemetry.deltaLeft);
+  jsonResponse += ",\"deltaRight\":" + String(telemetry.deltaRight);
+  jsonResponse += ",\"leftRatePps\":" + String(telemetry.leftRatePps, 3);
+  jsonResponse += ",\"rightRatePps\":" + String(telemetry.rightRatePps, 3);
+  jsonResponse += ",\"combinedSpeedPulses\":" + String(telemetry.combinedSpeedPulses, 3);
+  jsonResponse += ",\"speedFilter\":" + String(telemetry.speedFilter, 3);
+  jsonResponse += ",\"sampleCount\":" + String(telemetry.sampleCount);
+  jsonResponse += "}";
+  sendJson(client, "HTTP/1.1 200 OK", jsonResponse);
+  return true;
+}
+
+static bool handleEncoderResetRequest(WiFiClient &client, const String &header) {
+  if (header.indexOf("GET /encoder/reset") < 0) return false;
+
+  motor_reset_encoder_counts();
+  sendJson(client, "HTTP/1.1 200 OK", "{\"reset\":true}");
+  return true;
+}
+
+static bool handleBalanceStatusRequest(WiFiClient &client, const String &header) {
+  if (header.indexOf("GET /balance/status") < 0) return false;
+
+  BalanceTelemetry telemetry;
+  balance_get_status(telemetry);
+  String jsonResponse = "{";
+  jsonResponse += "\"imuReady\":" + String(jsonBool(telemetry.imuReady));
+  jsonResponse += ",\"lastReadOk\":" + String(jsonBool(telemetry.lastReadOk));
+  jsonResponse += ",\"calibrated\":" + String(jsonBool(telemetry.calibrated));
+  jsonResponse += ",\"calibrationInProgress\":" + String(jsonBool(telemetry.calibrationInProgress));
+  jsonResponse += ",\"balanceControllerEnabled\":" + String(jsonBool(telemetry.balanceControllerEnabled));
+  jsonResponse += ",\"balanceControlSafetyOk\":" + String(jsonBool(telemetry.balanceControlSafetyOk));
+  jsonResponse += ",\"balanceMotorOutputAvailable\":" + String(jsonBool(telemetry.balanceMotorOutputAvailable));
+  jsonResponse += ",\"balanceMotorOutputArmed\":" + String(jsonBool(telemetry.balanceMotorOutputArmed));
+  jsonResponse += ",\"balanceMotorOutputEnabled\":" + String(jsonBool(telemetry.balanceMotorOutputEnabled));
+  jsonResponse += ",\"balanceDriveCommandSent\":" + String(jsonBool(telemetry.balanceDriveCommandSent));
+  jsonResponse += ",\"balanceArmStartedAtMs\":" + String(telemetry.balanceArmStartedAtMs);
+  jsonResponse += ",\"balanceArmTimeoutMs\":" + String(telemetry.balanceArmTimeoutMs);
+  jsonResponse += ",\"balanceArmElapsedMs\":" + String(telemetry.balanceArmElapsedMs);
+  jsonResponse += ",\"balanceArmRemainingMs\":" + String(telemetry.balanceArmRemainingMs);
+  jsonResponse += ",\"balanceRunSampleCount\":" + String(telemetry.balanceRunSampleCount);
+  jsonResponse += ",\"imuAddress\":\"" + hexByte(telemetry.imuAddress) + "\"";
+  jsonResponse += ",\"whoAmI\":\"" + hexByte(telemetry.whoAmI) + "\"";
+  jsonResponse += ",\"whoAmICompatible\":" + String(jsonBool(telemetry.whoAmICompatible));
+  jsonResponse += ",\"updatedAtMs\":" + String(telemetry.updatedAtMs);
+  jsonResponse += ",\"loopCount\":" + String(telemetry.loopCount);
+  jsonResponse += ",\"failedReadCount\":" + String(telemetry.failedReadCount);
+  jsonResponse += ",\"loopDtMs\":" + String(telemetry.loopDtMs, 3);
+  jsonResponse += ",\"accelPitchDeg\":" + String(telemetry.accelPitchDeg, 3);
+  jsonResponse += ",\"accelPitchSource\":\"accelTiltXDeg\"";
+  jsonResponse += ",\"accelAngleAyAzDeg\":" + String(telemetry.accelAngleAyAzDeg, 3);
+  jsonResponse += ",\"accelAngleAxAzDeg\":" + String(telemetry.accelAngleAxAzDeg, 3);
+  jsonResponse += ",\"accelAngleAxAyDeg\":" + String(telemetry.accelAngleAxAyDeg, 3);
+  jsonResponse += ",\"accelTiltXDeg\":" + String(telemetry.accelTiltXDeg, 3);
+  jsonResponse += ",\"axisFilterReady\":" + String(jsonBool(telemetry.axisFilterReady));
+  jsonResponse += ",\"accelAngleAyAzSmoothedDeg\":" + String(telemetry.accelAngleAyAzSmoothedDeg, 3);
+  jsonResponse += ",\"accelAngleAxAzSmoothedDeg\":" + String(telemetry.accelAngleAxAzSmoothedDeg, 3);
+  jsonResponse += ",\"accelAngleAxAySmoothedDeg\":" + String(telemetry.accelAngleAxAySmoothedDeg, 3);
+  jsonResponse += ",\"accelTiltXSmoothedDeg\":" + String(telemetry.accelTiltXSmoothedDeg, 3);
+  jsonResponse += ",\"pitchDeg\":" + String(telemetry.pitchDeg, 3);
+  jsonResponse += ",\"gyroRateDps\":" + String(telemetry.gyroRateDps, 3);
+  jsonResponse += ",\"gyroRateSource\":\"gyroYRateDps\"";
+  jsonResponse += ",\"gyroXRateDps\":" + String(telemetry.gyroXRateDps, 3);
+  jsonResponse += ",\"gyroYRateDps\":" + String(telemetry.gyroYRateDps, 3);
+  jsonResponse += ",\"gyroZRateDps\":" + String(telemetry.gyroZRateDps, 3);
+  jsonResponse += ",\"gyroBiasRaw\":" + String(telemetry.gyroBiasRaw, 3);
+  jsonResponse += ",\"balanceSetpointDeg\":" + String(telemetry.balanceSetpointDeg, 3);
+  jsonResponse += ",\"balanceKp\":" + String(telemetry.balanceKp, 3);
+  jsonResponse += ",\"balanceKi\":" + String(telemetry.balanceKi, 3);
+  jsonResponse += ",\"balanceKd\":" + String(telemetry.balanceKd, 3);
+  jsonResponse += ",\"balanceOutputLimit\":" + String(telemetry.balanceOutputLimit, 3);
+  jsonResponse += ",\"balanceMaxAbsAngleDeg\":" + String(telemetry.balanceMaxAbsAngleDeg, 3);
+  jsonResponse += ",\"balanceMotorSign\":" + String(telemetry.balanceMotorSign, 1);
+  jsonResponse += ",\"balanceAngleErrorDeg\":" + String(telemetry.balanceAngleErrorDeg, 3);
+  jsonResponse += ",\"balanceIntegralError\":" + String(telemetry.balanceIntegralError, 3);
+  jsonResponse += ",\"balancePTerm\":" + String(telemetry.balancePTerm, 3);
+  jsonResponse += ",\"balanceITerm\":" + String(telemetry.balanceITerm, 3);
+  jsonResponse += ",\"balanceDTerm\":" + String(telemetry.balanceDTerm, 3);
+  jsonResponse += ",\"balanceOutputRaw\":" + String(telemetry.balanceOutputRaw, 3);
+  jsonResponse += ",\"balanceOutputClamped\":" + String(telemetry.balanceOutputClamped, 3);
+  jsonResponse += ",\"balanceMixedOutputRaw\":" + String(telemetry.balanceMixedOutputRaw, 3);
+  jsonResponse += ",\"balanceMixedOutputClamped\":" + String(telemetry.balanceMixedOutputClamped, 3);
+  jsonResponse += ",\"balanceMixedOutputSaturated\":" + String(jsonBool(telemetry.balanceMixedOutputSaturated));
+  jsonResponse += ",\"balanceMixedOutputSaturationCount\":" + String(telemetry.balanceMixedOutputSaturationCount);
+  jsonResponse += ",\"balanceMixedOutputSaturationRatio\":" + String(telemetry.balanceMixedOutputSaturationRatio, 3);
+  jsonResponse += ",\"balanceLeftPwm\":" + String(telemetry.balanceLeftPwm);
+  jsonResponse += ",\"balanceRightPwm\":" + String(telemetry.balanceRightPwm);
+  jsonResponse += ",\"speedLoopReady\":" + String(jsonBool(telemetry.speedLoopReady));
+  jsonResponse += ",\"encoderTotalLeft\":" + String(telemetry.encoderTotalLeft);
+  jsonResponse += ",\"encoderTotalRight\":" + String(telemetry.encoderTotalRight);
+  jsonResponse += ",\"speedLoopDeltaLeft\":" + String(telemetry.speedLoopDeltaLeft);
+  jsonResponse += ",\"speedLoopDeltaRight\":" + String(telemetry.speedLoopDeltaRight);
+  jsonResponse += ",\"speedLoopSignedCommand\":" + String(telemetry.speedLoopSignedCommand, 3);
+  jsonResponse += ",\"speedLoopDirectionSign\":" + String(telemetry.speedLoopDirectionSign);
+  jsonResponse += ",\"speedLoopMixEnabled\":" + String(jsonBool(telemetry.speedLoopMixEnabled));
+  jsonResponse += ",\"speedLoopMixScale\":" + String(telemetry.speedLoopMixScale, 3);
+  jsonResponse += ",\"speedLoopCarSpeed\":" + String(telemetry.speedLoopCarSpeed, 3);
+  jsonResponse += ",\"speedLoopFilter\":" + String(telemetry.speedLoopFilter, 3);
+  jsonResponse += ",\"speedLoopIntegral\":" + String(telemetry.speedLoopIntegral, 3);
+  jsonResponse += ",\"speedLoopOutput\":" + String(telemetry.speedLoopOutput, 3);
+  jsonResponse += ",\"speedLoopSampleCount\":" + String(telemetry.speedLoopSampleCount);
+  jsonResponse += ",\"speedLoopResetCount\":" + String(telemetry.speedLoopResetCount);
+  jsonResponse += ",\"speedLoopResetReason\":\"" + String(telemetry.speedLoopResetReason) + "\"";
+  jsonResponse += ",\"balanceSafetyReason\":\"" + String(telemetry.balanceSafetyReason) + "\"";
+  jsonResponse += ",\"lastError\":\"" + String(telemetry.lastError) + "\"";
+  jsonResponse += "}";
+  sendJson(client, "HTTP/1.1 200 OK", jsonResponse);
+  return true;
+}
+
+static bool handleBalanceTraceRequest(WiFiClient &client, const String &header) {
+  if (header.indexOf("GET /balance/trace") < 0) return false;
+
+  BalanceTraceMeta meta;
+  balance_get_trace_meta(meta);
+  client.println("HTTP/1.1 200 OK");
+  client.println("Content-type: application/json");
+  client.println("Connection: close");
+  client.println();
+  client.print("{\"recording\":");
+  client.print(jsonBool(meta.recording));
+  client.print(",\"samplePeriodMs\":");
+  client.print(meta.samplePeriodMs);
+  client.print(",\"capacity\":");
+  client.print(meta.capacity);
+  client.print(",\"count\":");
+  client.print(meta.count);
+  client.print(",\"totalSamples\":");
+  client.print(meta.totalSamples);
+  client.print(",\"samples\":[");
+
+  for (uint16_t index = 0; index < meta.count; index++) {
+    BalanceTraceSample sample;
+    if (!balance_get_trace_sample(index, sample)) {
+      break;
+    }
+    if (index > 0) {
+      client.print(',');
+    }
+    String row = "{";
+    row += "\"atMs\":" + String(sample.atMs);
+    row += ",\"accelPitchDeg\":" + String(sample.accelPitchDeg, 3);
+    row += ",\"pitchDeg\":" + String(sample.pitchDeg, 3);
+    row += ",\"gyroRateDps\":" + String(sample.gyroRateDps, 3);
+    row += ",\"outputRaw\":" + String(sample.outputRaw, 3);
+    row += ",\"outputClamped\":" + String(sample.outputClamped, 3);
+    row += ",\"requestedLeftPwm\":" + String(sample.requestedLeftPwm);
+    row += ",\"requestedRightPwm\":" + String(sample.requestedRightPwm);
+    row += ",\"appliedLeftPwm\":" + String(sample.appliedLeftPwm);
+    row += ",\"appliedRightPwm\":" + String(sample.appliedRightPwm);
+    row += ",\"appliedAtMs\":" + String(sample.appliedAtMs);
+    row += ",\"appliedSequence\":" + String(sample.appliedSequence);
+    row += ",\"encoderLeft\":" + String(sample.encoderLeft);
+    row += ",\"encoderRight\":" + String(sample.encoderRight);
+    row += ",\"armed\":" + String(jsonBool(sample.armed));
+    row += ",\"safetyOk\":" + String(jsonBool(sample.safetyOk));
+    row += ",\"saturated\":" + String(jsonBool(sample.saturated));
+    row += "}";
+    client.print(row);
+  }
+  client.println("]}");
+  return true;
+}
+
+static bool handleBalanceConfigRequest(WiFiClient &client, const String &header) {
+  if (header.indexOf("GET /balance/config") < 0) return false;
+
+  BalanceControlConfig config;
+  balance_get_config(config);
+
+  float value = 0.0f;
+  bool updated = false;
+  if (queryFloatParam(header, "setpoint", value)) {
+    config.setpointDeg = clampConfigValue(value, -10.0f, 10.0f);
+    updated = true;
+  }
+  if (queryFloatParam(header, "kp", value)) {
+    config.kp = clampConfigValue(value, 0.0f, 200.0f);
+    updated = true;
+  }
+  if (queryFloatParam(header, "ki", value)) {
+    config.ki = clampConfigValue(value, 0.0f, 10.0f);
+    updated = true;
+  }
+  if (queryFloatParam(header, "kd", value)) {
+    config.kd = clampConfigValue(value, 0.0f, 20.0f);
+    updated = true;
+  }
+  if (queryFloatParam(header, "limit", value)) {
+    config.outputLimit = clampConfigValue(value, 0.0f, 255.0f);
+    updated = true;
+  }
+  if (queryFloatParam(header, "maxAngle", value)) {
+    config.maxAbsAngleDeg = clampConfigValue(value, 1.0f, 45.0f);
+    updated = true;
+  }
+  if (queryFloatParam(header, "motorSign", value)) {
+    config.motorSign = value < 0.0f ? -1.0f : 1.0f;
+    updated = true;
+  }
+  if (queryFloatParam(header, "speedMix", value)) {
+    config.speedMixEnabled = value >= 0.5f;
+    updated = true;
+  }
+  if (queryFloatParam(header, "speedScale", value)) {
+    config.speedMixScale = clampConfigValue(value, 0.0f, 1.0f);
+    updated = true;
+  }
+
+  if (updated) {
+    balance_set_config(config);
+  }
+
+  String jsonResponse = "{";
+  jsonResponse += "\"updated\":" + String(jsonBool(updated));
+  jsonResponse += ",\"volatile\":true";
+  jsonResponse += ",\"motorOutputAvailable\":" + String(jsonBool(BALANCE_MOTOR_OUTPUT_AVAILABLE != 0));
+  jsonResponse += ",\"armMaxOutputLimit\":" + String(BALANCE_ARM_MAX_OUTPUT_LIMIT, 3);
+  jsonResponse += ",\"setpointDeg\":" + String(config.setpointDeg, 3);
+  jsonResponse += ",\"kp\":" + String(config.kp, 3);
+  jsonResponse += ",\"ki\":" + String(config.ki, 3);
+  jsonResponse += ",\"kd\":" + String(config.kd, 3);
+  jsonResponse += ",\"outputLimit\":" + String(config.outputLimit, 3);
+  jsonResponse += ",\"maxAbsAngleDeg\":" + String(config.maxAbsAngleDeg, 3);
+  jsonResponse += ",\"motorSign\":" + String(config.motorSign, 1);
+  jsonResponse += ",\"speedMixEnabled\":" + String(jsonBool(config.speedMixEnabled));
+  jsonResponse += ",\"speedMixScale\":" + String(config.speedMixScale, 3);
+  jsonResponse += "}";
+  sendJson(client, "HTTP/1.1 200 OK", jsonResponse);
+  return true;
+}
+
+static bool handleBalanceArmRequest(WiFiClient &client, const String &header) {
+  if (header.indexOf("GET /balance/arm") < 0) return false;
+
+  float timeoutValue = 0.0f;
+  unsigned long timeoutMs = 0;
+  if (queryFloatParamForPath(header, "GET /balance/arm", "ms", timeoutValue)) {
+    timeoutMs = static_cast<unsigned long>(clampConfigValue(timeoutValue, 0.0f, BALANCE_ARM_MAX_RUNTIME_MS));
+  }
+
+  char reason[64] = "";
+  const bool armed = balance_request_motor_arm(reason, sizeof(reason), timeoutMs);
+  String jsonResponse = "{";
+  jsonResponse += "\"armed\":" + String(jsonBool(armed));
+  jsonResponse += ",\"motorOutputAvailable\":" + String(jsonBool(BALANCE_MOTOR_OUTPUT_AVAILABLE != 0));
+  jsonResponse += ",\"armMaxOutputLimit\":" + String(BALANCE_ARM_MAX_OUTPUT_LIMIT, 3);
+  jsonResponse += ",\"armMaxRuntimeMs\":" + String(BALANCE_ARM_MAX_RUNTIME_MS);
+  jsonResponse += ",\"requestedTimeoutMs\":" + String(timeoutMs);
+  jsonResponse += ",\"reason\":\"" + String(reason) + "\"";
+  jsonResponse += "}";
+  sendJson(client, armed ? "HTTP/1.1 202 Accepted" : "HTTP/1.1 409 Conflict", jsonResponse);
+  return true;
+}
+
+static bool handleBalanceDisarmRequest(WiFiClient &client, const String &header) {
+  if (header.indexOf("GET /balance/disarm") < 0) return false;
+
+  balance_request_motor_disarm();
+  sendJson(client, "HTTP/1.1 200 OK", "{\"armed\":false,\"reason\":\"disarmed\"}");
+  return true;
+}
+
+static bool handleBalanceCalibrateRequest(WiFiClient &client, const String &header) {
+  if (header.indexOf("GET /balance/calibrate") < 0) return false;
+
+  const bool queued = balance_request_calibration();
+  String jsonResponse = "{";
+  jsonResponse += "\"calibrationQueued\":" + String(jsonBool(queued));
+  jsonResponse += ",\"requiresStationaryRobot\":true";
+  jsonResponse += ",\"message\":\"Keep the robot still while calibrationInProgress is true.\"";
+  jsonResponse += "}";
+  sendJson(client, queued ? "HTTP/1.1 202 Accepted" : "HTTP/1.1 503 Service Unavailable", jsonResponse);
+  return true;
+}
+
+static bool queryFloatParam(const String &header, const char *name, float &value) {
+  return queryFloatParamForPath(header, "GET /balance/config", name, value);
+}
+
+static bool queryFloatParamForPath(const String &header, const char *path, const char *name, float &value) {
+  const int pathStart = header.indexOf(path);
+  if (pathStart < 0) return false;
+  const int queryStart = header.indexOf('?', pathStart);
+  const int httpStart = header.indexOf(" HTTP", pathStart);
+  if (queryStart < 0 || httpStart < 0 || queryStart > httpStart) return false;
+
+  String token = String(name) + "=";
+  const int tokenStart = header.indexOf(token, queryStart + 1);
+  if (tokenStart < 0 || tokenStart > httpStart) return false;
+  const char previous = header.charAt(tokenStart - 1);
+  if (previous != '?' && previous != '&') return false;
+
+  const int valueStart = tokenStart + token.length();
+  int valueEnd = header.indexOf('&', valueStart);
+  if (valueEnd < 0 || valueEnd > httpStart) {
+    valueEnd = httpStart;
+  }
+  String valueText = header.substring(valueStart, valueEnd);
+  if (valueText.length() == 0) return false;
+  value = valueText.toFloat();
+  return true;
+}
+
+static float clampConfigValue(float value, float minValue, float maxValue) {
+  if (value < minValue) {
+    return minValue;
+  }
+  if (value > maxValue) {
+    return maxValue;
+  }
+  return value;
 }
 
 static bool handleSensorRequest(WiFiClient &client, const String &header) {
@@ -114,7 +551,12 @@ static bool handleSensorRequest(WiFiClient &client, const String &header) {
 
   float aTemperature = 0.0;
   float aHumidity = 0.0;
+  if (!i2c_lock(pdMS_TO_TICKS(250))) {
+    sendJson(client, "HTTP/1.1 503 Service Unavailable", "{\"error\":\"I2C bus busy\"}");
+    return true;
+  }
   int16_t error = sensor.measureSingleShot(REPEATABILITY_MEDIUM, false, aTemperature, aHumidity);
+  i2c_unlock();
   if (error != NO_ERROR) {
 #ifdef USE_SERIAL
     char errorMessage[64];
@@ -140,9 +582,97 @@ static bool handleSensorRequest(WiFiClient &client, const String &header) {
   return true;
 }
 
+static bool handleMotorMeasurementRequest(WiFiClient &client, const String &header) {
+  if (header.indexOf("GET /motor/measurement") < 0) return false;
+
+  MotorAppliedTelemetry applied;
+  motor_get_applied_status(applied);
+  unsigned long leftCount = 0;
+  unsigned long rightCount = 0;
+  motor_snapshot_encoder_counts(leftCount, rightCount);
+
+  String jsonResponse = "{";
+  jsonResponse += "\"servedAtMs\":" + String(millis());
+  jsonResponse += ",\"initialized\":" + String(jsonBool(applied.initialized));
+  jsonResponse += ",\"appliedAtMs\":" + String(applied.updatedAtMs);
+  jsonResponse += ",\"sequence\":" + String(applied.sequence);
+  jsonResponse += ",\"leftPwm\":" + String(applied.leftPwm);
+  jsonResponse += ",\"rightPwm\":" + String(applied.rightPwm);
+  jsonResponse += ",\"timeoutMs\":" + String(applied.timeoutMs);
+  jsonResponse += ",\"running\":" + String(jsonBool(applied.running));
+  jsonResponse += ",\"encoderTotalLeft\":" + String(leftCount);
+  jsonResponse += ",\"encoderTotalRight\":" + String(rightCount);
+  jsonResponse += "}";
+  sendJson(client, "HTTP/1.1 200 OK", jsonResponse);
+  return true;
+}
+
+static bool handleMotorSignedTestRequest(WiFiClient &client, const String &header) {
+  static constexpr const char *PATH = "GET /motor/test/signed";
+  if (header.indexOf(PATH) < 0) return false;
+
+  float leftValue = 0.0f;
+  float rightValue = 0.0f;
+  float durationValue = 0.0f;
+  const bool hasLeft = queryFloatParamForPath(header, PATH, "left", leftValue);
+  const bool hasRight = queryFloatParamForPath(header, PATH, "right", rightValue);
+  const bool hasDuration = queryFloatParamForPath(header, PATH, "ms", durationValue);
+  if (!hasLeft || !hasRight || !hasDuration) {
+    sendJson(client, "HTTP/1.1 400 Bad Request", "{\"error\":\"left, right, and ms are required\"}");
+    return true;
+  }
+
+  const int leftPwm = static_cast<int>(leftValue);
+  const int rightPwm = static_cast<int>(rightValue);
+  const unsigned long durationMs = static_cast<unsigned long>(durationValue);
+  if (leftPwm < -MOTOR_CHARACTERIZATION_MAX_PWM || leftPwm > MOTOR_CHARACTERIZATION_MAX_PWM ||
+      rightPwm < -MOTOR_CHARACTERIZATION_MAX_PWM || rightPwm > MOTOR_CHARACTERIZATION_MAX_PWM ||
+      durationValue < 1.0f || durationMs > MOTOR_CHARACTERIZATION_MAX_TIME) {
+    String jsonResponse = "{\"error\":\"request outside characterization bounds\"";
+    jsonResponse += ",\"maxAbsPwm\":" + String(MOTOR_CHARACTERIZATION_MAX_PWM);
+    jsonResponse += ",\"maxDurationMs\":" + String(MOTOR_CHARACTERIZATION_MAX_TIME);
+    jsonResponse += "}";
+    sendJson(client, "HTTP/1.1 400 Bad Request", jsonResponse);
+    return true;
+  }
+
+  BalanceTelemetry balance;
+  balance_get_status(balance);
+  if (balance.balanceMotorOutputArmed) {
+    sendJson(client, "HTTP/1.1 409 Conflict", "{\"error\":\"disarm balance control before motor characterization\"}");
+    return true;
+  }
+
+#ifdef SAFE_BRINGUP
+  sendJson(client, "HTTP/1.1 409 Conflict", "{\"error\":\"SAFE_BRINGUP disables motor characterization\"}");
+  return true;
+#endif
+
+  MotorCommandMsg msg{};
+  msg.cmd = MotorCommand::BalanceDrive;
+  msg.timeoutMs = durationMs;
+  msg.leftPwm = leftPwm;
+  msg.rightPwm = rightPwm;
+  const unsigned long queuedAtMs = millis();
+  const bool queued = motor_submit_command(msg);
+
+  String jsonResponse = "{";
+  jsonResponse += "\"queued\":" + String(jsonBool(queued));
+  jsonResponse += ",\"queuedAtMs\":" + String(queuedAtMs);
+  jsonResponse += ",\"leftPwm\":" + String(leftPwm);
+  jsonResponse += ",\"rightPwm\":" + String(rightPwm);
+  jsonResponse += ",\"durationMs\":" + String(durationMs);
+  jsonResponse += ",\"maxAbsPwm\":" + String(MOTOR_CHARACTERIZATION_MAX_PWM);
+  jsonResponse += ",\"maxDurationMs\":" + String(MOTOR_CHARACTERIZATION_MAX_TIME);
+  jsonResponse += "}";
+  sendJson(client, queued ? "HTTP/1.1 202 Accepted" : "HTTP/1.1 503 Service Unavailable", jsonResponse);
+  return true;
+}
+
 static bool handleMotorRequest(WiFiClient &client, const String &header) {
   // /motor/* → enqueue a motor command and acknowledge
   if (header.indexOf("GET /motor/") < 0) return false;
+  const bool holdMode = header.indexOf("hold=1") >= 0;
 
   client.println("HTTP/1.1 200 OK");
   client.println("Content-type:text/html");
@@ -158,33 +688,61 @@ static bool handleMotorRequest(WiFiClient &client, const String &header) {
   bool recognized = false;
   // Dispatch motor commands by matching the request path to a direction/stop action.
   // header.indexOf(...) returns the substring position or -1; >= 0 means the route is present.
-  if (header.indexOf("GET /motor/forward") >= 0) { // forward command
+  if (header.indexOf("GET /motor/test/left-high") >= 0) {
+#ifdef USE_SERIAL
+    Serial.println("LEFT_HIGH");
+#endif
+    msg.cmd = MotorCommand::LeftHigh;
+    msg.timeoutMs = holdMode ? MOTOR_HOLD_REFRESH_TIME : MOTOR_DIAGNOSTIC_TIME;
+    recognized = true;
+  } else if (header.indexOf("GET /motor/test/left-low") >= 0) {
+#ifdef USE_SERIAL
+    Serial.println("LEFT_LOW");
+#endif
+    msg.cmd = MotorCommand::LeftLow;
+    msg.timeoutMs = holdMode ? MOTOR_HOLD_REFRESH_TIME : MOTOR_DIAGNOSTIC_TIME;
+    recognized = true;
+  } else if (header.indexOf("GET /motor/test/right-high") >= 0) {
+#ifdef USE_SERIAL
+    Serial.println("RIGHT_HIGH");
+#endif
+    msg.cmd = MotorCommand::RightHigh;
+    msg.timeoutMs = holdMode ? MOTOR_HOLD_REFRESH_TIME : MOTOR_DIAGNOSTIC_TIME;
+    recognized = true;
+  } else if (header.indexOf("GET /motor/test/right-low") >= 0) {
+#ifdef USE_SERIAL
+    Serial.println("RIGHT_LOW");
+#endif
+    msg.cmd = MotorCommand::RightLow;
+    msg.timeoutMs = holdMode ? MOTOR_HOLD_REFRESH_TIME : MOTOR_DIAGNOSTIC_TIME;
+    recognized = true;
+  } else if (header.indexOf("GET /motor/forward") >= 0) { // forward command
 #ifdef USE_SERIAL
     Serial.println(MOTOR_STATE_STRINGS[0]);
 #endif
     msg.cmd = MotorCommand::Forward;
-    msg.timeoutMs = MOTOR_FORWARD_BACK_TIME;
+    msg.timeoutMs = holdMode ? MOTOR_HOLD_REFRESH_TIME : MOTOR_FORWARD_BACK_TIME;
     recognized = true;
   } else if (header.indexOf("GET /motor/back") >= 0) {
 #ifdef USE_SERIAL
     Serial.println(MOTOR_STATE_STRINGS[1]);
 #endif
     msg.cmd = MotorCommand::Back;
-    msg.timeoutMs = MOTOR_FORWARD_BACK_TIME;
+    msg.timeoutMs = holdMode ? MOTOR_HOLD_REFRESH_TIME : MOTOR_FORWARD_BACK_TIME;
     recognized = true;
   } else if (header.indexOf("GET /motor/left") >= 0) {
 #ifdef USE_SERIAL
     Serial.println(MOTOR_STATE_STRINGS[2]);
 #endif
     msg.cmd = MotorCommand::Left;
-    msg.timeoutMs = MOTOR_TURN_TIME;
+    msg.timeoutMs = holdMode ? MOTOR_HOLD_REFRESH_TIME : MOTOR_TURN_TIME;
     recognized = true;
   } else if (header.indexOf("GET /motor/right") >= 0) {
 #ifdef USE_SERIAL
     Serial.println(MOTOR_STATE_STRINGS[3]);
 #endif
     msg.cmd = MotorCommand::Right;
-    msg.timeoutMs = MOTOR_TURN_TIME;
+    msg.timeoutMs = holdMode ? MOTOR_HOLD_REFRESH_TIME : MOTOR_TURN_TIME;
     recognized = true;
   } else if (header.indexOf("GET /motor/stop") >= 0) {
 #ifdef USE_SERIAL
@@ -196,7 +754,14 @@ static bool handleMotorRequest(WiFiClient &client, const String &header) {
   }
 
   if (recognized) {
-    xQueueSend(g_motorQueue, &msg, 0);
+#ifdef SAFE_BRINGUP
+    if (msg.cmd != MotorCommand::Stop) {
+      client.println("<h1>SAFE_BRINGUP: movement disabled</h1>");
+      client.println("<p>Rebuild without SAFE_BRINGUP after motor polarity and stop behavior are verified.</p>");
+      return true;
+    }
+#endif
+    motor_submit_command(msg);
   }
 
   client.println();
